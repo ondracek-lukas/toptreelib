@@ -21,6 +21,7 @@ template <class... TUserData> class TopTreeIntegrity {};
 
 #include <tuple>
 #include <vector>
+#include <list>
 
 enum TopTreeClusterType { BASE, COMPRESS, RAKE };
 typedef int TopTreeVertex; // vertex of underlying tree
@@ -44,6 +45,11 @@ class TopTree {
 			vertexToNode.emplace_back(nullptr);
 			return vertexToNode.size()-1;
 		};
+
+		int getVerticesCnt() {
+			return vertexToNode.size();
+		}
+
 		bool sameComponent(Vertex u, Vertex v) {
 			if (u == v) return true;
 			Node *uNode = vertexToNode[u];
@@ -51,10 +57,16 @@ class TopTree {
 			return uNode && vNode && (treeRoot(uNode) == treeRoot(vNode));
 		}
 
-		std::tuple<TUserData...> getRootData();         // copies the data
+		std::tuple<TUserData...> getRootData() {
+			assert(exposedRoot);
+			return exposedRoot->userData;
+		}
 		//void setRootData(const TUserData... &userData); // (or maybe set one userData at a time)
 
-		std::pair<Vertex, Vertex> getBoundary();
+		std::pair<Vertex, Vertex> getBoundary() {
+			assert(exposedRoot);
+			return {exposedRoot->boundary[0], exposedRoot->boundary[1]};
+		}
 
 		// User can request which data of TUserData... should be updated and which not.
 		// The TopTree changes the state as soon as it is consistent
@@ -74,13 +86,55 @@ class TopTree {
 			ClusterType clusterType;
 			std::tuple<TUserData...> userData;
 			bool userDataChanged[sizeof...(TUserData)];
-			bool userDataValidity = false;
+			bool userDataValid = false;
 			// Node *temporalListOfNodes; // several such lists for different purposes
 			// ...
 
 			Vertex getInnerVertex() { // or maybe store directly?
 				assert(Integrity::nodeChildrenBoundary(this));
 				return children[1]->boundary[ children[1]->boundary[0] == boundary[1] ];
+			}
+
+			// TODO: split and join only if enabled for user data
+
+			template <std::size_t... Is>
+			void userDataSplitSeq(std::index_sequence<Is...>) {
+				Vertex innerVertex = this.getInnerVertex();
+				(void)std::initializer_list<int>{
+					(std::get<Is>(userData).split(
+						clusterType,
+						std::get<Is>(parent->userData),
+						std::get<Is>(children[0]->userData),
+						std::get<Is>(children[1]->userData),
+						boundary[0],
+						boundary[1],
+						innerVertex
+					), 0)...
+				};
+			}
+
+			void userDataSplit() {
+				userDataSplitSeq(std::index_sequence_for<TUserData...>{});
+			}
+
+			template <std::size_t... Is>
+			void userDataJoinSeq(std::index_sequence<Is...>) {
+				Vertex innerVertex = this->getInnerVertex();
+				(void)std::initializer_list<int>{
+					(std::get<Is>(userData).join(
+						clusterType,
+						std::get<Is>(this->userData),
+						std::get<Is>(children[0]->userData),
+						std::get<Is>(children[1]->userData),
+						boundary[0],
+						boundary[1],
+						innerVertex
+					), 0)...
+				};
+			}
+
+			void userDataJoin() {
+				userDataJoinSeq(std::index_sequence_for<TUserData...>{});
 			}
 		};
 
@@ -95,7 +149,7 @@ class TopTree {
 		// Returns whether anything has been unrolled.
 		virtual bool rollback() { /* implicit worst-case impl. */ };
 
-		Node *root; // root of the exposed tree
+		Node *exposedRoot; // root of the exposed tree
 
 		std::vector<Node*> vertexToNode; // topmost nodes having given vertex as inner vertex, or root
 
@@ -112,13 +166,40 @@ class TopTree {
 		// Calls split on node and all ancestors with valid user data top-down
 		// marking them invalid.
 		void releaseNode(Node *node) {
-		
+			assert(node->clusterType != ClusterType::BASE);
+			std::list<Node*> nodes; // TODO: rewrite without std::list
+			while (node && node->userDataValid) {
+				nodes.emplace_front(node);
+				node = node->parent;
+			}
+			for (auto const& node : nodes) {
+				node->userDataSplit();
+				node->userDataValid = false;
+			}
 		}
 
 		// Calls join on all descendants with invalid user data bottom-up
 		// marking them valid.
-		void validateTree(Node *tree) {
-			assert(Integrity::treeConsistency(tree));
+		void validateTree(Node *root) {
+			assert(Integrity::treeConsistency(root));
+
+			Node *node = root;
+			while (true) {  // TODO: rewrite, possibly using iterator
+				if (!node->userDataValid) {
+					assert(node->clusterType != ClusterType::BASE);
+					node = node->children[0];
+					continue;
+				} else {
+					if (node == root) break;
+					if (node->parent->children[0] == node) {
+						node = node->parent->children[1];
+						continue;
+					}
+					node = node->parent;
+				}
+				node->userDataJoin();
+				node->userDataValid = true;
+			}
 
 		}
 
@@ -138,7 +219,7 @@ class TopTree {
 			return new Node;
 		}
 
-		void deleteNode(Node *node) { // XXX add deallocation in TopTree destructor
+		void deleteNode(Node *node) { // TODO: add deallocation in TopTree destructor
 			delete node;
 		}
 
@@ -168,11 +249,15 @@ class TopTree {
 			if (type != BASE) {
 				vertexToNode[node->getInnerVertex()] = node;
 			}
+			if (type == BASE) {
+				node->userDataValid = true;
+			}
 		}
 
 		void markNodeAsRoot(Node *node) {
 			vertexToNode[node->boundary[0]] = node;
 			vertexToNode[node->boundary[1]] = node;
+			exposedRoot = node;
 		}
 
 		void markNodeAsNonRoot(Node *node) {

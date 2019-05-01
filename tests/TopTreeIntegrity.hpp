@@ -69,7 +69,7 @@ class TopTreeIntegrity {
 			TEST(root->parent == nullptr);
 
 			Node *node = root;
-			do {
+			do { // XXX rewrite using iterator
 				if (node->clusterType == ClusterType::BASE) {
 
 					TEST2(node->children[I] == nullptr);
