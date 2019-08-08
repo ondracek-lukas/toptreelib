@@ -13,87 +13,87 @@
 
 #include <cstdio>
 
-template <class... TUserData>
-class TopTree;
+namespace TopTreeInternals {
+	template <class... TUserData>
+	class TopTree;
 
 #define assert_STR(expr) #expr
 #define assert(cond) { \
-	if (!(cond)) { \
-		printf("Assertion [" assert_STR(cond) "] failed at " __FILE__ ":%d\n\n", __LINE__); \
-		fflush(stdout); \
-		abort(); \
-	}}
+		if (!(cond)) { \
+			printf("Assertion [" assert_STR(cond) "] failed at " __FILE__ ":%d\n\n", __LINE__); \
+			fflush(stdout); \
+			abort(); \
+		}}
 
 #define FAIL_HERE { printf("\n\nIntegrity test failed at " __FILE__ ":%d\n", __LINE__); return false; }
 #define TEST(cond) {if (!(cond)) FAIL_HERE; }
 #define TEST2(cond) { int I = 0; TEST(cond); I = 1; TEST(cond); }
 #define REQUIRE_LEVEL(level) {if (TOP_TREE_INTEGRITY_LEVEL < level) return true; }
 
-template <class... TUserData>
-class TopTreeIntegrity {
-	using Vertex = typename TopTree<TUserData...>::Vertex;
-	using ClusterType = typename TopTree<TUserData...>::ClusterType;
-	using Node = typename TopTree<TUserData...>::Node;
+	template <class... TUserData>
+	class TopTreeIntegrity {
+		using Node = typename TopTree<TUserData...>::Node;
 
-	public:
+		public:
 
-		// tests constraints between node's and its children's boundary
-		static bool nodeChildrenBoundary(Node *node) {
-			if (node->clusterType == ClusterType::BASE) return true;
-			TEST2(node->children[I]);
+			// tests constraints between node's and its children's boundary
+			static bool nodeChildrenBoundary(Node *node) {
+				if (node->clusterType == ClusterType::BASE) return true;
+				TEST2(node->children[I]);
 
-			int boundaryInChildren[2] = {
-				node->children[0]->boundary[1] == node->boundary[0],
-				node->children[1]->boundary[1] == node->boundary[1]};
+				int boundaryInChildren[2] = {
+					node->children[0]->boundary[1] == node->boundary[0],
+					node->children[1]->boundary[1] == node->boundary[1]};
 
-			TEST2(node->children[I]->boundary[boundaryInChildren[I]] == node->boundary[I]);
+				TEST2(node->children[I]->boundary[boundaryInChildren[I]] == node->boundary[I]);
 
-			if (node->clusterType == ClusterType::COMPRESS) {
-				TEST(
-					node->children[0]->boundary[!boundaryInChildren[0]] ==
-					node->children[1]->boundary[!boundaryInChildren[1]]);
-				TEST(boundaryInChildren[0] == 0); // same order as in children; is needed?
-			} else {
-				TEST(node->clusterType == ClusterType::RAKE);
-				TEST(node->children[0]->boundary[!boundaryInChildren[0]] == node->boundary[1]);
+				if (node->clusterType == ClusterType::COMPRESS) {
+					TEST(
+						node->children[0]->boundary[!boundaryInChildren[0]] ==
+						node->children[1]->boundary[!boundaryInChildren[1]]);
+					TEST(boundaryInChildren[0] == 0); // same order as in children; is needed?
+				} else {
+					TEST(node->clusterType == ClusterType::RAKE);
+					TEST(node->children[0]->boundary[!boundaryInChildren[0]] == node->boundary[1]);
+				}
+
+				return true;
 			}
 
-			return true;
-		}
+			// tests parent/children pointers consistency and nodeChildrenBoundary in each node
+			static bool treeConsistency(Node *root) {
+				REQUIRE_LEVEL(2);
+				if (root == nullptr) return true;
 
-		// tests parent/children pointers consistency and nodeChildrenBoundary in each node
-		static bool treeConsistency(Node *root) {
-			REQUIRE_LEVEL(2);
-			if (root == nullptr) return true;
+				TEST(root->parent == nullptr);
 
-			TEST(root->parent == nullptr);
+				Node *node = root;
+				do { // XXX rewrite using iterator
+					if (node->clusterType == ClusterType::BASE) {
 
-			Node *node = root;
-			do { // XXX rewrite using iterator
-				if (node->clusterType == ClusterType::BASE) {
+						TEST2(node->children[I] == nullptr);
 
-					TEST2(node->children[I] == nullptr);
+						while ((node != root) && (node->parent->children[1] == node)) node = node->parent;
+						if (node != root) node = node->parent->children[1];
 
-					while ((node != root) && (node->parent->children[1] == node)) node = node->parent;
-					if (node != root) node = node->parent->children[1];
+					} else {
 
-				} else {
+						TEST2((node->children[I]) && (node->children[I]->parent == node));
+						TEST(nodeChildrenBoundary(node));
 
-					TEST2((node->children[I]) && (node->children[I]->parent == node));
-					TEST(nodeChildrenBoundary(node));
+						node = node->children[0];
 
-					node = node->children[0];
+					}
+				} while (node != root);
 
-				}
-			} while (node != root);
+				return true;
+			}
 
-			return true;
-		}
-
-};
+	};
 
 #undef TEST2
 #undef TEST
 #undef FAIL_HERE
+}
 #endif
 #endif

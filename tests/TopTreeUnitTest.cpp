@@ -168,7 +168,7 @@ class TestingTopTree : public TopTree<PathLengthUserData> {
 				Vertex otherVertex = this->newVertex();
 				auto &[data] = node->userData;
 				data.length = rndDist(rndGen) * 4 + 1;
-				this->setNodeBoundary(node, BASE, sharedVertex, otherVertex);
+				this->setNodeBoundary(node, ClusterType::BASE, sharedVertex, otherVertex);
 				baseCnt++;
 				apsp.newEdge(sharedVertex, otherVertex, data.length);
 			} else {
@@ -176,12 +176,12 @@ class TestingTopTree : public TopTree<PathLengthUserData> {
 				sharedVertex = node->children[0]->boundary[1];
 				this->attachSubtree(node, 1, createSubTree(depth-1, rakeToAllRatio, sharedVertex));
 				if (rndDist(rndGen) < rakeToAllRatio) {
-					this->setNodeBoundary(node, RAKE,
+					this->setNodeBoundary(node, ClusterType::RAKE,
 						node->children[0]->boundary[0],
 						node->children[0]->boundary[1]);
 					rakeCnt++;
 				} else {
-					this->setNodeBoundary(node, COMPRESS,
+					this->setNodeBoundary(node, ClusterType::COMPRESS,
 						node->children[0]->boundary[0],
 						node->children[1]->boundary[1]);
 					compressCnt++;
