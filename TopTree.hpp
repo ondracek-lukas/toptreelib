@@ -28,6 +28,8 @@ template <class... TUserData> class TopTreeIntegrity {};
 #include <vector>
 #include <list>
 
+#include "TopTreeInternals/SubtreeTraversability.hpp"
+
 namespace TopTreeInternals {
 
 	template <class... TUserData>
@@ -78,7 +80,8 @@ namespace TopTreeInternals {
 			// ...
 
 		protected:  // to be accessible by driver
-			struct Node {  // node in top tree
+			struct Node : SubtreeTraversability<Node> {  // node in top tree
+				size_t index; // < nodesAllocated, to be used in vectors with extension data
 				Vertex boundary[2];
 				Node *children[2] = {nullptr, nullptr};
 				Node *parent = nullptr;
@@ -101,7 +104,7 @@ namespace TopTreeInternals {
 
 				template <std::size_t... Is>
 				void userDataSplitSeq(std::index_sequence<Is...>) {
-					Vertex innerVertex = this.getInnerVertex();
+					Vertex innerVertex = this->getInnerVertex();
 					(void)std::initializer_list<int>{
 						(std::get<Is>(userData).split(
 							clusterType,
@@ -138,6 +141,7 @@ namespace TopTreeInternals {
 				void userDataJoin() {
 					userDataJoinSeq(std::index_sequence_for<TUserData...>{});
 				}
+
 			};
 
 			Node *treeRoot(Node *node) {
@@ -184,24 +188,11 @@ namespace TopTreeInternals {
 			void validateTree(Node *root) {
 				assert(Integrity::treeConsistency(root));
 
-				Node *node = root;
-				while (true) {  // TODO: rewrite, possibly using iterator
-					if (!node->userDataValid) {
-						assert(node->clusterType != ClusterType::BASE);
-						node = node->children[0];
-						continue;
-					} else {
-						if (node == root) break;
-						if (node->parent->children[0] == node) {
-							node = node->parent->children[1];
-							continue;
-						}
-						node = node->parent;
-					}
+				for (Node *node : root->postorder([](Node *node){return !node->userDataValid;})) {
+					assert(node->clusterType != ClusterType::BASE);
 					node->userDataJoin();
 					node->userDataValid = true;
 				}
-
 			}
 
 			// validateTree can be called either at the end of link/cut/(expose) operation,
@@ -216,8 +207,13 @@ namespace TopTreeInternals {
 			// the original methods should be called from new ones.
 			// All nodes created by the base class are deleted in rollabck method.
 
+			// TODO: reuse old nodes, not to increase nodesAllocated much
+			size_t nodesAllocated = 0;
+
 			Node *newNode() {
-				return new Node;
+				Node *node = new Node;
+				node->index = nodesAllocated++;
+				return node;
 			}
 
 			void deleteNode(Node *node) { // TODO: add deallocation in TopTree destructor
@@ -267,6 +263,7 @@ namespace TopTreeInternals {
 			}
 
 	};
+
 }
 
 using TopTreeClusterType = TopTreeInternals::ClusterType;

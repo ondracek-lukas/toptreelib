@@ -12,6 +12,7 @@
 #define TOP_TREE_INTEGRITY
 
 #include <cstdio>
+#include <vector>
 
 namespace TopTreeInternals {
 	template <class... TUserData>
@@ -60,31 +61,41 @@ namespace TopTreeInternals {
 				return true;
 			}
 
-			// tests parent/children pointers consistency and nodeChildrenBoundary in each node
+			// tests parent/children pointers consistency and nodeChildrenBoundary in each node;
+			// also tests correctness of tree traversal
 			static bool treeConsistency(Node *root) {
 				REQUIRE_LEVEL(2);
 				if (root == nullptr) return true;
 
+				//std::vector<int> nodeVisit; // 0 not seen, 1 seen as child, 2 visited
+				class NodeVisit : public std::vector<int> {
+					public:
+						bool testSet(Node *node, int oldVal, int newVal) {
+							int i = node->index;
+							if (this->size() <= i) this->resize(i + 1);
+							if ((*this)[i] != oldVal) return false;
+							(*this)[i] = newVal;
+							return true;
+						}
+				} nodeVisit;
+
 				TEST(root->parent == nullptr);
+				TEST(nodeVisit.testSet(root, 0, 1));
 
-				Node *node = root;
-				do { // XXX rewrite using iterator
+				for (Node *node : root->preorder()) {
+					TEST(nodeVisit.testSet(node, 1, 2));
 					if (node->clusterType == ClusterType::BASE) {
-
 						TEST2(node->children[I] == nullptr);
-
-						while ((node != root) && (node->parent->children[1] == node)) node = node->parent;
-						if (node != root) node = node->parent->children[1];
-
 					} else {
-
 						TEST2((node->children[I]) && (node->children[I]->parent == node));
 						TEST(nodeChildrenBoundary(node));
-
-						node = node->children[0];
-
+						TEST2(nodeVisit.testSet(node->children[I], 0, 1));
 					}
-				} while (node != root);
+				}
+
+				for (int visit : nodeVisit) {
+					TEST(visit == 2);
+				}
 
 				return true;
 			}
@@ -95,5 +106,6 @@ namespace TopTreeInternals {
 #undef TEST
 #undef FAIL_HERE
 }
+
 #endif
 #endif
