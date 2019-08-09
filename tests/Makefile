@@ -1,13 +1,15 @@
 #!/bin/bash
 
-.PHONY: all TopTreeUnitTest
+.PHONY: all %.test
+.PRECIOUS: %.out
 
-all: TopTreeUnitTest
+all: InnerListUnitTest.test TopTreeUnitTest.test
 
-TopTreeUnitTest: TopTreeUnitTest.out
-	ulimit -c0; time ./TopTreeUnitTest.out
+%.test: %.out
+	ulimit -c0; time ./$<
 
-TopTreeUnitTest.out: |../TopTree.hpp ../TopTreeInternals/*.hpp TopTreeIntegrity.hpp
+InnerListUnitTest.out: ../TopTreeInternals/InnerList.hpp
+TopTreeUnitTest.out: ../TopTree.hpp ../TopTreeInternals/*.hpp TopTreeIntegrity.hpp
 
 %.out: %.cpp
-	g++ -std=c++17 $^ -o $@ -fdiagnostics-color=always -g
+	g++ -std=c++17 $< -o $@ -fdiagnostics-color=always -g

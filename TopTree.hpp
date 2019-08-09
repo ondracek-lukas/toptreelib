@@ -29,6 +29,7 @@ template <class... TUserData> class TopTreeIntegrity {};
 #include <list>
 
 #include "TopTreeInternals/SubtreeTraversability.hpp"
+#include "TopTreeInternals/InnerList.hpp"
 
 namespace TopTreeInternals {
 
@@ -92,6 +93,7 @@ namespace TopTreeInternals {
 				std::tuple<TUserData...> userData;
 				bool userDataChanged[sizeof...(TUserData)];
 				bool userDataValid = false;
+				Node *tmpListNode = nullptr;
 				// Node *temporalListOfNodes; // several such lists for different purposes
 				// ...
 
@@ -172,12 +174,12 @@ namespace TopTreeInternals {
 			// marking them invalid.
 			void releaseNode(Node *node) {
 				assert(node->clusterType != ClusterType::BASE);
-				std::list<Node*> nodes; // TODO: rewrite without std::list
+				InnerList<Node, &Node::tmpListNode> nodes;
 				while (node && node->userDataValid) {
-					nodes.emplace_front(node);
+					nodes.push(node);
 					node = node->parent;
 				}
-				for (auto const& node : nodes) {
+				while (Node *node = nodes.pop()) {
 					node->userDataSplit();
 					node->userDataValid = false;
 				}
@@ -207,17 +209,20 @@ namespace TopTreeInternals {
 			// the original methods should be called from new ones.
 			// All nodes created by the base class are deleted in rollabck method.
 
-			// TODO: reuse old nodes, not to increase nodesAllocated much
 			size_t nodesAllocated = 0;
+			InnerList<Node, &Node::tmpListNode> freeNodes;
 
 			Node *newNode() {
-				Node *node = new Node;
-				node->index = nodesAllocated++;
+				Node *node = freeNodes.pop();
+				if (!node) {
+					node = new Node;
+					node->index = nodesAllocated++;
+				}
 				return node;
 			}
 
 			void deleteNode(Node *node) { // TODO: add deallocation in TopTree destructor
-				delete node;
+				freeNodes.push(node);
 			}
 
 			Node *detachSubtree(Node *subtree) {
