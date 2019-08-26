@@ -5,10 +5,7 @@
  *
  * It should be derived by a tree node class (TNode) containing
  *   TNode *parent,
- *   TNode *children[2], and
- *   ClusterType clusterType
- * satisfying
- *   children[0] == nullptr  <=>  children[1] == nullptr  <=>  clusterType == ClusterType::BASE.
+ *   TNode *children[2].
  *
  * It contains the following methods returning an iterable object:
  *   preorder(cond = true),
@@ -47,9 +44,9 @@ namespace TopTreeInternals {
 							TCond cond;
 							explicit Iterator(TNode *root, TNode *node, TCond cond) : root(root), node(node), cond(cond) {
 								if (node) {
-									bool condRes = (!visitFalseBorder || (node->clusterType != ClusterType::BASE)) && cond(node);
-									if ((node->clusterType != ClusterType::BASE) && condRes) {
-										dir = LEFT;
+									bool condRes = (!visitFalseBorder || node->children[0] || node->children[1]) && cond(node);
+									if ((node->children[0] || node->children[1]) && condRes) {
+										dir = node->children[0] ? LEFT : RIGHT;
 										if (postorder) ++*this;
 									} else {
 										dir = UP;
@@ -66,15 +63,18 @@ namespace TopTreeInternals {
 									bool condRes;
 									if (dir != UP) {
 										node = node->children[dir];
-										condRes = (!visitFalseBorder || (node->clusterType != ClusterType::BASE)) && cond(node);
-										if ((node->clusterType != ClusterType::BASE) && condRes) {
-											dir = LEFT;
+										condRes = (!visitFalseBorder || node->children[0] || node->children[1]) && cond(node);
+										if ((node->children[0] || node->children[1]) && condRes) {
+											dir = node->children[0] ? LEFT : RIGHT;
 										} else {
 											dir = UP;
 										}
 										if (!postorder && (visitFalseBorder || condRes)) break;
 									} else {
-										dir = (Dir)((node->parent && (node->parent->children[0] != node)) + 1);
+										dir =
+											!node->parent ||
+											((node->parent->children[0] == node) && (node->parent->children[1]))
+											? RIGHT : UP;
 										node = node->parent;
 										condRes = true;
 									}

@@ -52,7 +52,6 @@ namespace TopTreeInternals {
 					TEST(
 						node->children[0]->boundary[!boundaryInChildren[0]] ==
 						node->children[1]->boundary[!boundaryInChildren[1]]);
-					TEST(boundaryInChildren[0] == 0); // same order as in children; is needed?
 				} else {
 					TEST(node->clusterType == ClusterType::RAKE);
 					TEST(node->children[0]->boundary[!boundaryInChildren[0]] == node->boundary[1]);
@@ -94,7 +93,7 @@ namespace TopTreeInternals {
 				}
 
 				for (int visit : nodeVisit) {
-					TEST(visit == 2);
+					TEST(visit != 1);
 				}
 
 				return true;

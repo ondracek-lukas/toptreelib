@@ -35,16 +35,17 @@ namespace TopTreeInternals {
 
 	template <class... TUserData>
 	class TopTree {
-		using Integrity = TopTreeIntegrity<TUserData...>; friend Integrity;
+		protected:
+			using Integrity = TopTreeIntegrity<TUserData...>; friend Integrity;
 
 		public:
-			virtual void expose(Vertex u, Vertex v) {rollback(); /* implicit worst-case impl. */ };
-			virtual void exposeTree(Vertex v) {rollback(); /* implicit worst-case impl. */ }; // set tree with v as main
+			virtual bool expose(Vertex u, Vertex v);
+			virtual bool exposeTree(Vertex v); // set tree with v as main
 			virtual void link(Vertex u, Vertex v, TUserData... userData) = 0;
 			virtual std::tuple<TUserData...> cut(Vertex u, Vertex v) = 0;
 
 			virtual void searchBegin() {rollback(); /* implicit worst-case impl. */ };
-			bool searchStep(bool chooseSecond) { /* impl. */ };
+			bool searchStep(bool chooseSecond) { /* impl. */ };      // XXX use labdas instead
 
 			Vertex newVertex() {
 				vertexToNode.emplace_back(nullptr);
@@ -81,68 +82,70 @@ namespace TopTreeInternals {
 			// ...
 
 		protected:  // to be accessible by driver
+
+			struct Node;
+
+			struct NodeInPath {
+				Node *node = nullptr;
+				bool onPath = true;
+			};
+
 			struct Node : SubtreeTraversability<Node> {  // node in top tree
 				size_t index; // < nodesAllocated, to be used in vectors with extension data
 				Vertex boundary[2];
 				Node *children[2] = {nullptr, nullptr};
 				Node *parent = nullptr;
 				// constraints:
-					// boundary[0] should be in children[0]->boundary;
-					// if rake node, boundary should equal children[0]->boundary (incl. order);
+					// boundary[i] should be in children[i]->boundary;
 				ClusterType clusterType;
 				std::tuple<TUserData...> userData;
 				bool userDataChanged[sizeof...(TUserData)];
 				bool userDataValid = false;
 				Node *tmpListNode = nullptr;
+				Node *rollbackListNode = nullptr;
+				bool tmpMark = false;
 				// Node *temporalListOfNodes; // several such lists for different purposes
 				// ...
 
+				Vertex getOtherVertex(Vertex vertex) {
+					return boundary[ boundary[0] == vertex ];
+				}
+
 				Vertex getInnerVertex() { // or maybe store directly?
 					assert(Integrity::nodeChildrenBoundary(this));
-					return children[1]->boundary[ children[1]->boundary[0] == boundary[1] ];
+					return children[1]->getOtherVertex(boundary[1]);
 				}
 
-				// TODO: split and join only if enabled for user data
+				Vertex getSharedVertex() {
+					assert(Integrity::nodeChildrenBoundary(this));
+					return children[0]->getOtherVertex(boundary[0]);
+				}
+
+				std::tuple<NodeInPath, NodeInPath> getChildren(Vertex firstVertex = nullptr, bool rev = false);
 
 				template <std::size_t... Is>
-				void userDataSplitSeq(std::index_sequence<Is...>) {
-					Vertex innerVertex = this->getInnerVertex();
-					(void)std::initializer_list<int>{
-						(std::get<Is>(userData).split(
-							clusterType,
-							std::get<Is>(parent->userData),
-							std::get<Is>(children[0]->userData),
-							std::get<Is>(children[1]->userData),
-							boundary[0],
-							boundary[1],
-							innerVertex
-						), 0)...
-					};
-				}
+				void userDataSplitSeq(std::index_sequence<Is...>);
 
 				void userDataSplit() {
 					userDataSplitSeq(std::index_sequence_for<TUserData...>{});
 				}
 
 				template <std::size_t... Is>
-				void userDataJoinSeq(std::index_sequence<Is...>) {
-					Vertex innerVertex = this->getInnerVertex();
-					(void)std::initializer_list<int>{
-						(std::get<Is>(userData).join(
-							clusterType,
-							std::get<Is>(this->userData),
-							std::get<Is>(children[0]->userData),
-							std::get<Is>(children[1]->userData),
-							boundary[0],
-							boundary[1],
-							innerVertex
-						), 0)...
-					};
-				}
+				void userDataJoinSeq(std::index_sequence<Is...>);
 
 				void userDataJoin() {
 					userDataJoinSeq(std::index_sequence_for<TUserData...>{});
 				}
+
+				// For base cluster use setBoundary;
+				// for non-base cluster use either attachChildren, or twice attachChild and setBoundary.
+
+				Node *attachChildren(ClusterType type, Node *child1, Node *child2);
+				Node *attachChild(int childIndex, Node* child);
+				Node *detach();
+
+				void setBoundary(ClusterType type); // for COMPRESS or RAKE node
+				void setBoundary(Vertex v1, Vertex v2); // for BASE node
 
 			};
 
@@ -152,10 +155,15 @@ namespace TopTreeInternals {
 				return node;
 			}
 
+			// Nodes of the original tree with child used in the temporary tree;
+			// the child's parent pointer points to the temporary tree;
+			// the node one should be the original root.
+			InnerList<Node, &Node::rollbackListNode> rollbackList;
+
 			// To be called after implicit expose or search;
 			// can be extended by same actions for amortization in non-worst-case version.
 			// Returns whether anything has been unrolled.
-			virtual bool rollback() { /* implicit worst-case impl. */ };
+			virtual bool rollback();
 
 			Node *exposedRoot; // root of the exposed tree
 
@@ -180,16 +188,19 @@ namespace TopTreeInternals {
 					node = node->parent;
 				}
 				while (Node *node = nodes.pop()) {
-					node->userDataSplit();
-					node->userDataValid = false;
+					releaseJustNode(node);
 				}
+			}
+
+			void releaseJustNode(Node *node) {
+				assert(!node->parent || !node->parent->userDataValid);
+				node->userDataSplit();
+				node->userDataValid = false;
 			}
 
 			// Calls join on all descendants with invalid user data bottom-up
 			// marking them valid.
 			void validateTree(Node *root) {
-				assert(Integrity::treeConsistency(root));
-
 				for (Node *node : root->postorder([](Node *node){return !node->userDataValid;})) {
 					assert(node->clusterType != ClusterType::BASE);
 					node->userDataJoin();
@@ -225,35 +236,12 @@ namespace TopTreeInternals {
 				freeNodes.push(node);
 			}
 
-			Node *detachSubtree(Node *subtree) {
-				Node *p = subtree->parent;
-				if (p) {
-					if (p.children[0] && p.children[1]) {
-						vertexToNode[p.getInnerVertex()] = nullptr;
-					}
-					releaseNode(p);
-					p->children[ p->children[0] != subtree ] = nullptr;
-					subtree->parent = nullptr;
-				}
-				return p;
+			void vertexToNodeUpdateInner(Node *node) {
+				vertexToNode[node->getInnerVertex()] = node;
 			}
 
-			Node *attachSubtree(Node *parent, int childIndex, Node* subtree) {
-				parent->children[childIndex] = subtree;
-				subtree->parent = parent;
-				return parent;
-			}
-
-			void setNodeBoundary(Node *node, ClusterType type, Vertex v1, Vertex v2) {
-				node->clusterType = type;
-				node->boundary[0] = v1;
-				node->boundary[1] = v2;
-				if (type != BASE) {
-					vertexToNode[node->getInnerVertex()] = node;
-				}
-				if (type == BASE) {
-					node->userDataValid = true;
-				}
+			void markVertexAsIsolated(Vertex vertex) {
+				vertexToNode[vertex] = nullptr;
 			}
 
 			void markNodeAsRoot(Node *node) {
@@ -267,7 +255,304 @@ namespace TopTreeInternals {
 				vertexToNode[node->boundary[1]] = nullptr;
 			}
 
+		private:
+			NodeInPath joinNodesInPath(NodeInPath np1, NodeInPath np2);
 	};
+
+
+	// --- TopTree methods' implementation ---
+
+	template <class... TUserData>
+	inline typename TopTree<TUserData...>::NodeInPath TopTree<TUserData...>::joinNodesInPath(NodeInPath np1, NodeInPath np2) {
+		if (np1.node && np2.node) {
+			NodeInPath nRet = { .node = newNode(), .onPath = true };
+			if (np1.onPath) {
+				nRet.node->attachChildren(np2.onPath ? COMPRESS : RAKE, np1.node, np2.node);
+			} else {
+				nRet.node->attachChildren(RAKE, np2.node, np1.node);
+				nRet.onPath = np2.onPath;
+			}
+			return nRet;
+		} else if (np1.node) {
+			return np1;
+		} else {
+			return np2;
+		}
+	}
+
+	template <class... TUserData>
+	bool TopTree<TUserData...>::expose(Vertex u, Vertex v) {
+		rollback();
+		if (!sameComponent(u, v) || !vertexToNode[u]) return false;
+
+		Vertex vL, vPostpR;
+		NodeInPath npL, npR, npM, npPostpM, npPostpR;
+
+		// mark all predecessors of u and v, to be processed
+		for (Vertex w : {u, v}) {
+			Node *n = vertexToNode[w];
+			assert(n);
+			if ((n->boundary[0] == w) || (n->boundary[1] == w)) continue;
+			while (!n->tmpMark) {
+				n->tmpMark = true;
+				if (!n->parent) {
+					assert(!npM.node); // otherwise u, v are in different trees
+					npM.node = n;
+					break;
+				}
+				n = n->parent;
+			}
+		}
+
+		if (!npM.node) {
+			exposedRoot = vertexToNode[u];
+			return true;
+		}
+
+		/* We are now maintaining a path composed of clusters (and vertices) in the order:
+		 *   npL, vpL, npM = (npML, npMR), npR, npPostpM, vPostpR, npPostpR;
+		 * some of np nodes may be raked to the path (if !.onPath), i.e. sharing only one vertex.
+		 * We are decomposing a middle node npM into
+		 *   its unmarked descendants to be added to left side npL or right side npR,
+		 *   its marked descendants to become new npM, or to be postponed to npPostpM;
+		 * other joining of clusters in path may occur,
+		 * usually keeping the right boundary vertex of npR unchanged --
+		 * having found one of u, v, it is kept there.
+		 */
+
+		vL = npM.node->boundary[0];
+
+		while (npM.node) {
+			assert(npM.node->clusterType != BASE);
+			npM.node->tmpMark = false;
+			releaseJustNode(npM.node);
+			rollbackList.push(npM.node);
+
+			if ((vL == u) || (vL == v)) {
+				vL = npM.node->getOtherVertex(vL);
+				std::tie(npL, npR) = std::tuple(npR, npL);
+			}
+
+			auto [npML, npMR] = npM.node->getChildren(vL);
+			Vertex npM_inner = npM.node->getInnerVertex();
+
+			if ((npM_inner != u) && (npM_inner != v)) {
+
+				// join unmarked subcluster to side, or postpone right subcluster if both marked
+				if (!npML.node->tmpMark) {
+					assert(npMR.node->tmpMark);
+					npL = joinNodesInPath(npL, npML);
+					vL = npM.node->getSharedVertex();
+					npM = npMR;
+				} else if (!npMR.node->tmpMark) {
+					npR = joinNodesInPath(npR, npMR);
+					npM = npML;
+				} else {
+					npPostpR = npR;  npR = {};
+					vPostpR = npM.node->getOtherVertex(vL);
+					npPostpM = npMR;
+					npM = npML;
+				}
+			} else {
+				if (!npML.node->tmpMark && !npMR.node->tmpMark) {
+
+					// join npL, npML, npMR to npR keeping the inner vertex in boundary
+					if (npML.onPath) {
+						npL = joinNodesInPath(npL, npML);
+						npML = {};
+						npM = npMR;
+					}
+					if (npMR.onPath) {
+						npR = joinNodesInPath(npR, npMR);
+						npMR = {};
+						npM = npML;
+					}
+					npL.onPath = false;
+					npR = joinNodesInPath(npR, npL);
+					npL = {};
+					npM.onPath = true;
+					npR = joinNodesInPath(npR, npM);
+
+					// restore postponed if any
+					npM = npPostpM; npPostpM = {};
+					vL = vPostpR;
+					npL = npPostpR;
+
+				} else {
+					assert(npML.node->tmpMark ^ npMR.node->tmpMark);
+					assert(!npPostpM.node);
+					if (npMR.node->tmpMark) {
+						// reverse path
+						std::tie(npL, npML, npMR, npR) = std::tuple(npR, npMR, npML, npL);
+						vL = npM.node->getOtherVertex(vL);
+					}
+
+					// join npMR to npR keeping the inner vertex in boundary
+					bool npMR_origOnPath = npMR.onPath;
+					npR.onPath = npMR.onPath;
+					npMR.onPath = true;
+					npR = joinNodesInPath(npR, npMR);
+					npR.onPath = !npMR_origOnPath;
+					npM = npML;
+				}
+			}
+
+			if (!npM.onPath) {
+				assert(npM.node);
+
+				// make npM onPath
+				npL.onPath = false;
+				npR = joinNodesInPath(npR, npL);
+				npL = {};
+				npM.onPath = true;
+				vL = npM.node->getOtherVertex(vL);
+			}
+		}
+		exposedRoot = npR.node;
+
+		assert(Integrity::treeConsistency(exposedRoot));
+		validateTree(exposedRoot);
+		return true;
+	};
+
+	template <class... TUserData>
+	bool TopTree<TUserData...>::exposeTree(Vertex v) {
+		rollback();
+		if (!vertexToNode[v]) return false;
+		exposedRoot = treeRoot(vertexToNode[v]);
+		return true;
+	};
+
+	template <class... TUserData>
+	bool TopTree<TUserData...>::rollback() {
+		Node *node = nullptr;
+		while (node = rollbackList.pop()) {
+			for (int i : {0, 1}) {
+				if (node->children[i]->parent != node) {
+					// release and detach child from temporal tree
+					releaseNode(node->children[i]->parent);
+					node->children[i]->detach();
+
+					// attach child back to the original tree
+					node->attachChild(i, node->children[i]);
+				}
+			}
+		}
+
+		if (node) {
+			for (Node *node : exposedRoot->postorder()) {
+				deleteNode(node);
+			}
+			exposedRoot = node;
+			validateTree(node);
+		}
+		return node;
+	}
+
+	// --- TopTree::Node methods' implementation ---
+
+
+	template <class... TUserData>
+	std::tuple<typename TopTree<TUserData...>::NodeInPath, typename TopTree<TUserData...>::NodeInPath> TopTree<TUserData...>::Node::getChildren(Vertex firstVertex, bool rev) {
+		assert(clusterType != BASE);
+		rev ^= (boundary[0] != firstVertex);
+		NodeInPath ret[2] = {
+			{ .node = children[0], .onPath = true },
+			{ .node = children[1], .onPath = (clusterType == COMPRESS) }};
+		return std::tuple(ret[rev], ret[!rev]);
+	}
+
+	// TODO: split and join only if enabled for user data
+
+	template <class... TUserData>
+	template <std::size_t... Is>
+	void TopTree<TUserData...>::Node::userDataSplitSeq(std::index_sequence<Is...>) {
+		Vertex innerVertex = this->getInnerVertex();
+		(void)std::initializer_list<int>{
+			(std::get<Is>(userData).split(
+				clusterType,
+				std::get<Is>(parent->userData),
+				std::get<Is>(children[0]->userData),
+				std::get<Is>(children[1]->userData),
+				boundary[0],
+				boundary[1],
+				innerVertex
+			), 0)...
+		};
+	}
+
+
+	template <class... TUserData>
+	template <std::size_t... Is>
+	void TopTree<TUserData...>::Node::userDataJoinSeq(std::index_sequence<Is...>) {
+		Vertex innerVertex = this->getInnerVertex();
+		(void)std::initializer_list<int>{
+			(std::get<Is>(userData).join(
+				clusterType,
+				std::get<Is>(this->userData),
+				std::get<Is>(children[0]->userData),
+				std::get<Is>(children[1]->userData),
+				boundary[0],
+				boundary[1],
+				innerVertex
+			), 0)...
+		};
+	}
+
+
+	template <class... TUserData>
+	typename TopTree<TUserData...>::Node *TopTree<TUserData...>::Node::attachChildren(ClusterType type, Node *child1, Node *child2) {
+		attachChild(0, child1);
+		attachChild(1, child2);
+		setBoundary(type);
+		return this;
+	}
+
+	template <class... TUserData>
+	typename TopTree<TUserData...>::Node *TopTree<TUserData...>::Node::attachChild(int childIndex, Node* child) {
+		this->children[childIndex] = child;
+		child->parent = this;
+		return this;
+	}
+
+	template <class... TUserData>
+	typename TopTree<TUserData...>::Node *TopTree<TUserData...>::Node::detach() {
+		Node *p = this->parent;
+		if (p) {
+			assert(p->children[ p->children[0] != this ] == this);
+			p->children[ p->children[0] != this ] = nullptr;
+			this->parent = nullptr;
+		}
+		return p;
+	}
+
+	template <class... TUserData>
+	void TopTree<TUserData...>::Node::setBoundary(ClusterType type) { // for COMPRESS or RAKE node
+		this->clusterType = type;
+		auto [child1, child2] = this->children;
+		assert((type != BASE) && child1 && child2);
+
+		Vertex sharedVertex = child2->boundary[0];
+		if ((child1->boundary[0] != sharedVertex) && (child1->boundary[1] != sharedVertex)) {
+			sharedVertex = child2->boundary[1];
+			assert((child1->boundary[0] == sharedVertex) || (child1->boundary[1] == sharedVertex));
+		}
+
+		this->boundary[0] = child1->getOtherVertex(sharedVertex);
+		this->boundary[1] = type == COMPRESS ?
+			child2->getOtherVertex(sharedVertex) : sharedVertex;
+
+		assert(Integrity::nodeChildrenBoundary(this));
+	}
+
+	template <class... TUserData>
+	void TopTree<TUserData...>::Node::setBoundary(Vertex v1, Vertex v2) { // for BASE node
+		assert((this->children[0] == nullptr) && (this->children[1] == nullptr));
+		this->clusterType = BASE;
+		this->boundary[0] = v1;
+		this->boundary[1] = v2;
+		this->userDataValid = true;
+	}
 
 }
 
