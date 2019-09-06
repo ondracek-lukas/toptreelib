@@ -44,8 +44,13 @@ namespace TopTreeInternals {
 			virtual void link(Vertex u, Vertex v, TUserData... userData) = 0;
 			virtual std::tuple<TUserData...> cut(Vertex u, Vertex v) = 0;
 
-			virtual void searchBegin() {rollback(); /* implicit worst-case impl. */ };
-			bool searchStep(bool chooseSecond) { /* impl. */ };      // XXX use labdas instead
+
+			template <int TUserDataIndex = 0, bool onExposedPath = false, class TSelect>
+			void search(TSelect select); // not virtual; redeclare using std:function if needed
+
+			template <int TUserDataIndex = 0, class TSelect>
+			void pathSearch(TSelect select) { search<TUserDataIndex, true>(select); };
+
 
 			Vertex newVertex() {
 				vertexToNode.emplace_back(nullptr);
@@ -56,7 +61,7 @@ namespace TopTreeInternals {
 				return vertexToNode.size();
 			}
 
-			bool sameComponent(Vertex u, Vertex v) {
+			bool sameComponent(Vertex u, Vertex v) { // XXX requires rollback
 				if (u == v) return true;
 				Node *uNode = vertexToNode[u];
 				Node *vNode = vertexToNode[v];
@@ -142,6 +147,7 @@ namespace TopTreeInternals {
 
 				Node *attachChildren(ClusterType type, Node *child1, Node *child2);
 				Node *attachChild(int childIndex, Node* child);
+				Node *detachChildren();
 				Node *detach();
 
 				void setBoundary(ClusterType type); // for COMPRESS or RAKE node
@@ -156,8 +162,8 @@ namespace TopTreeInternals {
 			}
 
 			// Nodes of the original tree with child used in the temporary tree;
-			// the child's parent pointer points to the temporary tree;
-			// the node one should be the original root.
+			// the child's parent pointer points into the temporary tree;
+			// original roots should have tmpMark set.
 			InnerList<Node, &Node::rollbackListNode> rollbackList;
 
 			// To be called after implicit expose or search;
@@ -188,14 +194,17 @@ namespace TopTreeInternals {
 					node = node->parent;
 				}
 				while (Node *node = nodes.pop()) {
-					releaseJustNode(node);
+					node->userDataSplit();
+					node->userDataValid = false;
 				}
 			}
 
 			void releaseJustNode(Node *node) {
 				assert(!node->parent || !node->parent->userDataValid);
-				node->userDataSplit();
-				node->userDataValid = false;
+				if (node->userDataValid) {
+					node->userDataSplit();
+					node->userDataValid = false;
+				}
 			}
 
 			// Calls join on all descendants with invalid user data bottom-up
@@ -233,6 +242,7 @@ namespace TopTreeInternals {
 			}
 
 			void deleteNode(Node *node) { // TODO: add deallocation in TopTree destructor
+				assert(!node->parent && !node->children[0] && !node->children[1]);
 				freeNodes.push(node);
 			}
 
@@ -324,7 +334,6 @@ namespace TopTreeInternals {
 
 		while (npM.node) {
 			assert(npM.node->clusterType != BASE);
-			npM.node->tmpMark = false;
 			releaseJustNode(npM.node);
 			rollbackList.push(npM.node);
 
@@ -397,6 +406,7 @@ namespace TopTreeInternals {
 				}
 			}
 
+
 			if (!npM.onPath) {
 				assert(npM.node);
 
@@ -406,6 +416,9 @@ namespace TopTreeInternals {
 				npL = {};
 				npM.onPath = true;
 				vL = npM.node->getOtherVertex(vL);
+			}
+			if (npM.node) {
+				npM.node->tmpMark = false;
 			}
 		}
 		exposedRoot = npR.node;
@@ -424,29 +437,127 @@ namespace TopTreeInternals {
 	};
 
 	template <class... TUserData>
-	bool TopTree<TUserData...>::rollback() {
-		Node *node = nullptr;
-		while (node = rollbackList.pop()) {
-			for (int i : {0, 1}) {
-				if (node->children[i]->parent != node) {
-					// release and detach child from temporal tree
-					releaseNode(node->children[i]->parent);
-					node->children[i]->detach();
+	template <int TUserDataIndex, bool onExposedPath, class TSelect>
+	inline void TopTree<TUserData...>::search(TSelect select) {
+		if (!exposedRoot || (exposedRoot->clusterType == BASE)) {
+			return;
+		}
+		if (!onExposedPath) {
+			rollback();
+		}
 
-					// attach child back to the original tree
-					node->attachChild(i, node->children[i]);
+		// We maintain path: npL = (npLL, npRR), vM, npR = (npRL, npRR)
+		// Inv.: npL either equals npLR, or is temporary; symmetrically for npR, npRL
+		NodeInPath npL, npLL, npLR, npR, npRL, npRR;
+		Vertex vM;
+
+		exposedRoot->tmpMark = true;
+		npL.node = npLR.node = exposedRoot;
+		vM = npLR.node->boundary[0];
+
+		while (npLR.node->clusterType != BASE) {
+
+			// npL, npR are not set at this point; npRL is empty; npLR should be split
+
+			releaseJustNode(npLR.node);
+			rollbackList.push(npLR.node);
+
+			std::tie(npLR, npRL) = npLR.node->getChildren(vM, true);
+			if (npRL.onPath) {
+				vM = npRL.node->getOtherVertex(vM);
+			}
+
+			npL = joinNodesInPath(npLL, npLR);
+			npR = joinNodesInPath(npRL, npRR);
+
+			bool reverse;
+			if (onExposedPath && (!npLR.onPath || !npRL.onPath)) {
+				reverse = !npLR.onPath;
+			} else {
+				NodeInPath npRoot = joinNodesInPath(npL, npR);
+				assert(Integrity::treeConsistency(npRoot.node));
+				validateTree(npRoot.node); // XXX not all user data need updating here
+
+				reverse = select(
+					npRoot.node->clusterType,
+					std::get<TUserDataIndex>(npRoot.node->userData),
+					std::get<TUserDataIndex>(npRoot.node->children[0]->userData),
+					std::get<TUserDataIndex>(npRoot.node->children[1]->userData),
+					npRoot.node->boundary[0],
+					npRoot.node->boundary[1],
+					npRoot.node->getInnerVertex());
+				reverse ^= npRoot.node->children[0] != npL.node;
+
+				releaseJustNode(npRoot.node);
+				npRoot.node->detachChildren();
+				deleteNode(npRoot.node);
+			}
+
+			if (reverse) {
+				std::tie(npLL, npLR, npL, npR, npRL, npRR) = std::tuple(npRR, npRL, npR, npL, npLR, npLL);
+			}
+
+			if (npL.node != npLR.node) {
+				releaseJustNode(npL.node);
+				npL.node->detachChildren();
+				deleteNode(npL.node);
+			}
+			npL = {};
+			npRR = npR;
+			npR = {}; npRL = {};
+
+			if (!npLR.onPath) {
+				npLL.onPath = false;
+				npRR = joinNodesInPath(npRR, npLL);
+				npLL = {};
+				npLR.onPath = true;
+			}
+		}
+
+		npLL.onPath = false;
+		npRR.onPath = false;
+		npL = joinNodesInPath(npLL, npLR);
+		NodeInPath npRoot = joinNodesInPath(npL, npRR);
+
+		exposedRoot = npRoot.node;
+		assert(Integrity::treeConsistency(exposedRoot));
+		validateTree(exposedRoot);
+	}
+
+	template <class... TUserData>
+	bool TopTree<TUserData...>::rollback() {
+		if (rollbackList.front()) {
+			while (Node *node = rollbackList.pop()) {
+				for (int i : {0, 1}) {
+					assert(node->children[i]);
+					if (node->children[i]->parent != node) {
+						if (node->children[i]->parent) {
+							// release and detach child from temporal tree
+							releaseNode(node->children[i]->parent);
+							node->children[i]->detach();
+						}
+
+						// attach child back to the original tree
+						node->attachChild(i, node->children[i]);
+					}
+				}
+
+				// destroy temporary tree if previous root was found
+				if (node->tmpMark) {
+					node->tmpMark = false;
+					for (Node *node : exposedRoot->postorder()) {
+						node->detach();
+						deleteNode(node);
+					}
+					exposedRoot = node;
+					assert(Integrity::treeConsistency(exposedRoot));
 				}
 			}
-		}
 
-		if (node) {
-			for (Node *node : exposedRoot->postorder()) {
-				deleteNode(node);
-			}
-			exposedRoot = node;
-			validateTree(node);
+			validateTree(exposedRoot);
+			return true;
 		}
-		return node;
+		return false;
 	}
 
 	// --- TopTree::Node methods' implementation ---
@@ -471,7 +582,7 @@ namespace TopTreeInternals {
 		(void)std::initializer_list<int>{
 			(std::get<Is>(userData).split(
 				clusterType,
-				std::get<Is>(parent->userData),
+				std::get<Is>(this->userData),
 				std::get<Is>(children[0]->userData),
 				std::get<Is>(children[1]->userData),
 				boundary[0],
@@ -524,6 +635,16 @@ namespace TopTreeInternals {
 			this->parent = nullptr;
 		}
 		return p;
+	}
+
+	template <class... TUserData>
+	typename TopTree<TUserData...>::Node *TopTree<TUserData...>::Node::detachChildren() {
+		for (size_t i : {0, 1}) {
+			if (this->children[i]) {
+				this->children[i]->detach();
+			}
+		}
+		return this;
 	}
 
 	template <class... TUserData>

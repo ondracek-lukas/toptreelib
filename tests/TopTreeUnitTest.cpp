@@ -35,6 +35,9 @@ class APSP { // All Paths Shortest Path
 		int getLength(int u, int v) {
 			return matrixElem(u, v);
 		}
+		int isConnected(int u, int v) {
+			return matrixElem(u, v) != INF;
+		}
 		int getVerticesCnt() {
 			return verticesCnt;
 		}
@@ -79,82 +82,64 @@ struct PathLengthUserData {
 			Data &parent, Data &child1, Data &child2,
 			Vertex vertex1, Vertex vertex2, Vertex innerVertex) {
 
-		if (type == TopTreeClusterType::COMPRESS) {
+		assert(child1.length > 0);
+		if (type == ClusterType::COMPRESS) {
 			parent.length = child1.length + child2.length;
 		} else {
 			parent.length = child1.length;
 		}
 
+		// deliberately destroy data in child1 to test split;
+		// children modifications in join may be forbidden in future versions
+		child1.length = 0;
 	}
 
 	void split(
 			ClusterType type,
 			Data &parent, Data &child1, Data &child2,
-			Vertex vertex1, Vertex vertex2, Vertex innerVertex) { };
+			Vertex vertex1, Vertex vertex2, Vertex innerVertex) {
+
+		assert(child1.length == 0);
+		// repair data destroyed by join
+		if (type == ClusterType::COMPRESS) {
+			child1.length = parent.length - child2.length;
+		} else {
+			child1.length = parent.length;
+		}
+	}
 };
 
-class TestingTopTree : public TopTree<PathLengthUserData> {
+class TestingTopTree : public TopTree<PathLengthUserData, PathLengthUserData> {
 	using Vertex = TopTreeVertex;
 	using ClusterType = TopTreeClusterType;
-	using Node = typename TopTree<PathLengthUserData>::Node;
-
-	/*
-	public:
-		// fixed small tree
-		TestingTopTree() {
-			Vertex u = this->newVertex();
-			Vertex v = this->newVertex();
-			Vertex w = this->newVertex();
-			Vertex z = this->newVertex();
-			Vertex y = this->newVertex();
-
-			Node *a = this->newNode();
-			this->setNodeBoundary(a, BASE, u, v);
-
-			Node *b = this->newNode();
-			this->setNodeBoundary(b, BASE, v, w);
-
-			Node *c = this->newNode();
-			this->setNodeBoundary(c, BASE, v, z);
-
-			Node *d = this->newNode();
-			this->attachSubtree(d, 0, b);
-			this->attachSubtree(d, 1, c);
-			this->setNodeBoundary(d, RAKE, w, v);
-
-			Node *e = this->newNode();
-			this->attachSubtree(e, 0, a);
-			this->attachSubtree(e, 1, d);
-			this->setNodeBoundary(e, COMPRESS, u, w);
-			this->markNodeAsRoot(e);
-
-			this->validateTree(e);
-		}
-		*/
-
-
+	using Node = typename TopTree<PathLengthUserData, PathLengthUserData>::Node;
 
 	public:
 
-		APSP apsp;
+		APSP paths;
+		APSP edges;
 
-		// random perfectly ballaced tree
-		TestingTopTree(unsigned int seed, unsigned int depth, float rakeToAllRatio = 0.5) :
-			rndGen(seed), rndDist(0,1), apsp((1 << depth) + 1)
+		// two random perfectly ballaced trees
+		TestingTopTree(unsigned int seed, unsigned int depth1, unsigned int depth2, float rakeToAllRatio = 0.5) :
+			rndGen(seed), rndDist(0,1), edges((1 << depth1) + (1 << depth2) + 2), paths((1 << depth1) + (1 << depth2) + 2)
 		{
-			Node *root = createSubTree(depth, rakeToAllRatio, this->newVertex());
+			Node *root = createSubTree(depth1, rakeToAllRatio, this->newVertex());
 			this->markNodeAsRoot(root);
 			assert(Integrity::treeConsistency(root));
 			this->validateTree(root);
-			apsp.compute();
+			root = createSubTree(depth2, rakeToAllRatio, this->newVertex());
+			this->markNodeAsRoot(root);
+			assert(Integrity::treeConsistency(root));
+			this->validateTree(root);
+			paths.compute();
 			printf("Base nodes: %d\nRake nodes: %d\nCompress nodes: %d\n", baseCnt, rakeCnt, compressCnt);
 		}
 
 
-		virtual void link(Vertex u, Vertex v, PathLengthUserData data) {
+		virtual void link(Vertex u, Vertex v, PathLengthUserData data, PathLengthUserData data2) {
 			assert(0);
 		}
-		virtual std::tuple<PathLengthUserData> cut(Vertex u, Vertex v) {
+		virtual std::tuple<PathLengthUserData, PathLengthUserData> cut(Vertex u, Vertex v) {
 			assert(0);
 		}
 
@@ -167,11 +152,12 @@ class TestingTopTree : public TopTree<PathLengthUserData> {
 			Node *node = this->newNode();
 			if (depth == 0) {
 				Vertex otherVertex = this->newVertex();
-				auto &[data] = node->userData;
-				data.length = rndDist(rndGen) * 4 + 1;
+				auto &[dataPathLen, dataEdgesCnt] = node->userData;
+				dataPathLen.length = rndDist(rndGen) * 1000 + 1;
 				node->setBoundary(sharedVertex, otherVertex);
 				baseCnt++;
-				apsp.newEdge(sharedVertex, otherVertex, data.length);
+				edges.newEdge(sharedVertex, otherVertex, dataPathLen.length);
+				paths.newEdge(sharedVertex, otherVertex, dataPathLen.length);
 			} else {
 				ClusterType type;
 				if (rndDist(rndGen) < rakeToAllRatio) {
@@ -194,51 +180,52 @@ class TestingTopTree : public TopTree<PathLengthUserData> {
 };
 
 int main() {
-	//TestingTopTree<> tree;
-	//for (int i = 0; i < 5; i++)
-	//	for (int j = 0; j < 5; j++)
-	//		printf("%d %d %d\n", i, j, tree.sameComponent(i, j));
+	TestingTopTree tree(42, 7, 6);
 
-
-	/*
-	{
-		TestingTopTree tree(1,5);
-		assert(tree.getVerticesCnt() == tree.apsp.getVerticesCnt());
-		std::cout << "APSP matrix:" << std::endl;
-		tree.apsp.print();
-		auto [u,v] = tree.getBoundary();
-		auto [rootData] = tree.getRootData();
-
-		std::cout << "(" << u << ", " << v << ")-path's length by top tree: " << rootData.length << std::endl;
-		std::cout << "(" << u << ", " << v << ")-path's length by APSP:     " << tree.apsp.getLength(u,v) << std::endl;
-	}
-	*/
-
-	for (int i = 10; i < 20; i++) {
-		TestingTopTree tree(i, (i < 19 ? 6 : 7));
-
-		auto [u,v] = tree.getBoundary();
-		auto [rootData] = tree.getRootData();
-		std::cout
-			<< "(" << u << "," << v << ") " << tree.apsp.getLength(u,v)
-			<< " ~ " << rootData.length << std::endl;
-		assert(rootData.length == tree.apsp.getLength(u,v));
-
-		for (TopTreeVertex u = 0; u < tree.getVerticesCnt(); u++) {
-			for (TopTreeVertex v = u + 1; v < tree.getVerticesCnt(); v++) {
-				tree.expose(u, v);
+	std::cout << "Testing expose (connectivity and lengths of all paths):" << std::endl;
+	for (TopTreeVertex u = 0; u < tree.getVerticesCnt(); u++) {
+		std::cout << "  ...from vertex " << u << std::endl;
+		for (TopTreeVertex v = u + 1; v < tree.getVerticesCnt(); v++) {
+			if (tree.expose(u, v)) {
 				auto [u2,v2] = tree.getBoundary();
-				auto [rootData] = tree.getRootData();
-				std::cout
-					<< "(" << u << "," << v << ") " << tree.apsp.getLength(u,v)
-					<< " ~ (" << u2 << "," << v2 << ") " << rootData.length << " "
-					<< std::endl;
-
+				auto [rootData, rootData2] = tree.getRootData();
 				assert(((u == u2) && (v == v2)) || ((u == v2) && (v == u2)));
-				assert(rootData.length == tree.apsp.getLength(u,v));
+				assert(rootData.length == tree.paths.getLength(u,v));
+			} else {
+				assert(!tree.paths.isConnected(u, v));
 			}
 		}
-
 	}
+
+	std::cout << "Testing path search (enumeration of chosen paths):" << std::endl;
+	for (TopTreeVertex u = 0; u < tree.getVerticesCnt(); u+=21) {
+		std::cout << "  ...from vertex " << u << std::endl;
+		for (TopTreeVertex v = u + 1; v < tree.getVerticesCnt(); v+=5) {
+			std::cout << "    ...to vertex " << v << std::endl;
+			if (tree.expose(u, v)) {
+				TopTreeVertex currVert = u;
+				for (int i = 1; currVert != v; i++) {
+					tree.pathSearch<1>([u, i](auto type, auto parent, auto child1, auto child2, auto vert1, auto vert2, auto innerVert) {
+						if (vert1 == u) {
+							return parent.length - child2.length < i;
+						} else {
+							return child2.length >= i;
+						}
+					});
+					auto [boundVert1, boundVert2] = tree.getBoundary();
+					assert((boundVert1 == currVert) || (boundVert2 == currVert));
+					TopTreeVertex nextVert = boundVert1 == currVert ? boundVert2 : boundVert1;
+					assert(tree.edges.isConnected(currVert, nextVert));
+					currVert = nextVert;
+					tree.expose(u, v);
+				}
+			}
+		}
+	}
+
+	// TODO: test non-path search
+	// TODO: implement and test deactivating data propagation
+
+
 	return 0;
 }
