@@ -1,8 +1,5 @@
 // TopTreeLibrary  Copyright (C) 2019  Lukáš Ondráček <ondracek@ktiml.mff.cuni.cz>, use under GNU GPLv3
 
-/* This will became a unit test in future.
- */
-
 #define TOP_TREE_INTEGRITY_LEVEL 2
 #include "../TopTree.hpp"
 
@@ -69,55 +66,64 @@ class APSP { // All Paths Shortest Path
 };
 
 struct PathLengthUserData {
+	using EventData = TopTreeEventData<PathLengthUserData>;
+
 	int length;
 
-	using Vertex = TopTreeVertex;
-	using ClusterType = TopTreeClusterType;
-	using Data = PathLengthUserData;
-
 	PathLengthUserData(int length = 1) : length(length) {};
+	operator int() { return length; }
 
-	void join(
-			ClusterType type,
-			Data &parent, Data &child1, Data &child2,
-			Vertex vertex1, Vertex vertex2, Vertex innerVertex) {
-
-		assert(child1.length > 0);
-		if (type == ClusterType::COMPRESS) {
-			parent.length = child1.length + child2.length;
+	static void join(EventData eventData) {
+		if (eventData.type == TopTreeClusterType::COMPRESS) {
+			eventData.parent.length = eventData.children[0].length + eventData.children[1].length;
 		} else {
-			parent.length = child1.length;
-		}
-
-		// deliberately destroy data in child1 to test split;
-		// children modifications in join may be forbidden in future versions
-		child1.length = 0;
-	}
-
-	void split(
-			ClusterType type,
-			Data &parent, Data &child1, Data &child2,
-			Vertex vertex1, Vertex vertex2, Vertex innerVertex) {
-
-		assert(child1.length == 0);
-		// repair data destroyed by join
-		if (type == ClusterType::COMPRESS) {
-			child1.length = parent.length - child2.length;
-		} else {
-			child1.length = parent.length;
+			eventData.parent.length = eventData.children[0].length;
 		}
 	}
+
+	static void split(EventData eventData) { }
+
 };
 
-class TestingTopTree : public TopTree<PathLengthUserData, PathLengthUserData> {
+struct TreeMinEdgeUserData {
+	using EventData = TopTreeEventData<TreeMinEdgeUserData>;
+
+	int minWeight;
+	int delta = 0;  // to be added to all weights in descendants
+
+	TreeMinEdgeUserData(int weight = 0) : minWeight(weight) {};
+	operator int() { return minWeight; };
+
+	void increaseAllInTree(int delta) {
+		this->delta += delta;
+		this->minWeight += delta;
+	}
+
+	static void join(EventData eventData) {
+		eventData.parent.minWeight =
+			eventData.children[ eventData.children[0].minWeight > eventData.children[1].minWeight ].minWeight;
+		eventData.parent.delta = 0;
+	}
+
+	static void split(EventData eventData) {
+		for (size_t i : {0, 1}) {
+			eventData.children[i].delta += eventData.parent.delta;
+			eventData.children[i].minWeight += eventData.parent.delta;
+		}
+	}
+
+};
+
+class TestingTopTree : public TopTree<PathLengthUserData, PathLengthUserData, TreeMinEdgeUserData> {
 	using Vertex = TopTreeVertex;
 	using ClusterType = TopTreeClusterType;
-	using Node = typename TopTree<PathLengthUserData, PathLengthUserData>::Node;
+	using Node = typename TopTree<PathLengthUserData, PathLengthUserData, TreeMinEdgeUserData>::Node;
 
 	public:
 
 		APSP paths;
 		APSP edges;
+		struct { int weight = std::numeric_limits<int>::max(); Vertex u; Vertex v; } minima[10];
 
 		// two random perfectly ballaced trees
 		TestingTopTree(unsigned int seed, unsigned int depth1, unsigned int depth2, float rakeToAllRatio = 0.5) :
@@ -126,20 +132,18 @@ class TestingTopTree : public TopTree<PathLengthUserData, PathLengthUserData> {
 			Node *root = createSubTree(depth1, rakeToAllRatio, this->newVertex());
 			this->markNodeAsRoot(root);
 			assert(Integrity::treeConsistency(root));
-			this->validateTree(root);
 			root = createSubTree(depth2, rakeToAllRatio, this->newVertex());
 			this->markNodeAsRoot(root);
 			assert(Integrity::treeConsistency(root));
-			this->validateTree(root);
 			paths.compute();
 			printf("Base nodes: %d\nRake nodes: %d\nCompress nodes: %d\n", baseCnt, rakeCnt, compressCnt);
 		}
 
 
-		virtual void link(Vertex u, Vertex v, PathLengthUserData data, PathLengthUserData data2) {
+		virtual void link(Vertex u, Vertex v, PathLengthUserData data, PathLengthUserData data2, TreeMinEdgeUserData data3) {
 			assert(0);
 		}
-		virtual std::tuple<PathLengthUserData, PathLengthUserData> cut(Vertex u, Vertex v) {
+		virtual std::tuple<PathLengthUserData, PathLengthUserData, TreeMinEdgeUserData> cut(Vertex u, Vertex v) {
 			assert(0);
 		}
 
@@ -152,12 +156,30 @@ class TestingTopTree : public TopTree<PathLengthUserData, PathLengthUserData> {
 			Node *node = this->newNode();
 			if (depth == 0) {
 				Vertex otherVertex = this->newVertex();
-				auto &[dataPathLen, dataEdgesCnt] = node->userData;
-				dataPathLen.length = rndDist(rndGen) * 1000 + 1;
 				node->setBoundary(sharedVertex, otherVertex);
 				baseCnt++;
-				edges.newEdge(sharedVertex, otherVertex, dataPathLen.length);
-				paths.newEdge(sharedVertex, otherVertex, dataPathLen.length);
+
+				auto &[pathLen, edgesCnt, treeMinEdge] = node->userData;
+				pathLen = rndDist(rndGen) * 1000 + 1;
+				edges.newEdge(sharedVertex, otherVertex, pathLen);
+				paths.newEdge(sharedVertex, otherVertex, pathLen);
+
+				treeMinEdge = 0;
+				while (treeMinEdge == 0) {
+					treeMinEdge = rndDist(rndGen) * 100000 + 1;
+					for (auto m : minima) {
+						if (m.weight == treeMinEdge) treeMinEdge = 0;
+					}
+				}
+
+				if (minima[std::size(minima) - 1].weight > treeMinEdge) {
+					int i = std::size(minima) - 1;
+					for (; i > 0; i--) {
+						if (minima[i-1].weight < treeMinEdge) break;
+						minima[i] = minima[i-1];
+					}
+					minima[i] = {treeMinEdge, sharedVertex, otherVertex};
+				}
 			} else {
 				ClusterType type;
 				if (rndDist(rndGen) < rakeToAllRatio) {
@@ -180,51 +202,71 @@ class TestingTopTree : public TopTree<PathLengthUserData, PathLengthUserData> {
 };
 
 int main() {
-	TestingTopTree tree(42, 7, 6);
 
-	std::cout << "Testing expose (connectivity and lengths of all paths):" << std::endl;
-	for (TopTreeVertex u = 0; u < tree.getVerticesCnt(); u++) {
+	// 128-edge tree and 64-edge tree
+	// on vertices 0-128 and 129-193
+	TestingTopTree forest(42, 7, 6);
+
+	std::cout << "Testing expose with bottom-up data aggregation (connectivity and lengths of all paths):" << std::endl;
+	for (TopTreeVertex u = 0; u < forest.getVerticesCnt(); u++) {
 		std::cout << "  ...from vertex " << u << std::endl;
-		for (TopTreeVertex v = u + 1; v < tree.getVerticesCnt(); v++) {
-			if (tree.expose(u, v)) {
-				auto [u2,v2] = tree.getBoundary();
-				auto [rootData, rootData2] = tree.getRootData();
+		for (TopTreeVertex v = u + 1; v < forest.getVerticesCnt(); v++) {
+			if (forest.expose(u, v)) {
+				auto [u2,v2] = forest.getBoundary();
+				auto rootData = forest.getRootData<0>();
 				assert(((u == u2) && (v == v2)) || ((u == v2) && (v == u2)));
-				assert(rootData.length == tree.paths.getLength(u,v));
+				assert(rootData.length == forest.paths.getLength(u,v));
 			} else {
-				assert(!tree.paths.isConnected(u, v));
+				assert(!forest.paths.isConnected(u, v));
 			}
 		}
 	}
 
-	std::cout << "Testing path search (enumeration of chosen paths):" << std::endl;
-	for (TopTreeVertex u = 0; u < tree.getVerticesCnt(); u+=21) {
+	std::cout << "Testing path search with bottom-up data aggregation (enumeration of chosen paths):" << std::endl;
+	for (TopTreeVertex u = 0; u < forest.getVerticesCnt(); u+=21) {
 		std::cout << "  ...from vertex " << u << std::endl;
-		for (TopTreeVertex v = u + 1; v < tree.getVerticesCnt(); v+=5) {
+		for (TopTreeVertex v = u + 1; v < forest.getVerticesCnt(); v+=5) {
 			std::cout << "    ...to vertex " << v << std::endl;
-			if (tree.expose(u, v)) {
+			if (forest.expose(u, v)) {
 				TopTreeVertex currVert = u;
 				for (int i = 1; currVert != v; i++) {
-					tree.pathSearch<1>([u, i](auto type, auto parent, auto child1, auto child2, auto vert1, auto vert2, auto innerVert) {
-						if (vert1 == u) {
-							return parent.length - child2.length < i;
-						} else {
-							return child2.length >= i;
-						}
+					forest.pathSearch<1>([u, i](auto eventData) {
+						bool rev = eventData.boundary[1] == u;
+						return rev ^ (eventData.children[rev].length < i);
 					});
-					auto [boundVert1, boundVert2] = tree.getBoundary();
+					auto [boundVert1, boundVert2] = forest.getBoundary();
 					assert((boundVert1 == currVert) || (boundVert2 == currVert));
 					TopTreeVertex nextVert = boundVert1 == currVert ? boundVert2 : boundVert1;
-					assert(tree.edges.isConnected(currVert, nextVert));
+					assert(forest.edges.isConnected(currVert, nextVert));
 					currVert = nextVert;
-					tree.expose(u, v);
+					forest.expose(u, v);
 				}
 			}
 		}
 	}
 
-	// TODO: test non-path search
-	// TODO: implement and test deactivating data propagation
+	std::cout << "Testing tree search with both bottom-up data aggregation and top-down propagation\n(increasing all edges and enumaration of lowest weight edges):" << std::endl;
+
+	forest.exposeTree(0);
+	forest.getRootData<2>().increaseAllInTree(10);
+	forest.exposeTree(129);
+	forest.getRootData<2>().increaseAllInTree(10);
+
+	for (auto minimum : forest.minima) {
+		forest.exposeTree(minimum.u);
+		forest.search<2>([](auto eventData) {
+			return eventData.children[1] < eventData.children[0];
+		});
+		auto [u, v] = forest.getBoundary();
+		int weight = forest.getRootData<2>().minWeight;
+
+		std::cout << "  " << minimum.u << " " << minimum.v << ": " << minimum.weight
+			<< " -- " << u << " " << v << ": " << weight << std::endl;
+		assert(((minimum.u == u) && (minimum.v == v)) || ((minimum.u == v) && (minimum.v == u)));
+		assert(minimum.weight + 10 == weight);
+
+		forest.getEdgeData<2>() = std::numeric_limits<int>::max();
+	}
 
 
 	return 0;

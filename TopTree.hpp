@@ -13,8 +13,8 @@
 #endif
 
 namespace TopTreeInternals {
-	enum ClusterType { BASE, COMPRESS, RAKE };
-	typedef int Vertex; // vertex of underlying tree
+	enum ClusterType { BASE, COMPRESS, RAKE };  // aka ::TopTreeClusterType
+	typedef int Vertex; // aka ::TopTreeVertex, vertex of underlying tree
 }
 
 #if TOP_TREE_INTEGRITY_LEVEL > 0
@@ -26,15 +26,37 @@ template <class... TUserData> class TopTreeIntegrity {};
 
 #include <tuple>
 #include <vector>
-#include <list>
 
 #include "TopTreeInternals/SubtreeTraversability.hpp"
 #include "TopTreeInternals/InnerList.hpp"
 
 namespace TopTreeInternals {
 
+	template <class TUserData>
+	struct EventData {  // aka ::TopTreeEventData
+		private:
+			struct DataRefsArray {
+				private: TUserData *elems[2];
+				public:
+					DataRefsArray(TUserData &elem1, TUserData &elem2) : elems{&elem1, &elem2} {};
+					TUserData &operator[](int i) {return *elems[i]; }
+			};
+		public:
+			ClusterType type;
+			TUserData &parent;
+			DataRefsArray children;
+			Vertex boundary[2];
+			Vertex innerVertex;
+			EventData(
+				ClusterType type,
+				TUserData &parent, TUserData &child1, TUserData &child2,
+				Vertex *boundary, Vertex innerVertex) :
+				type(type), parent(parent), children{child1, child2},
+				boundary{boundary[0], boundary[1]}, innerVertex(innerVertex) {};
+	};
+
 	template <class... TUserData>
-	class TopTree {
+	class TopTree {  // aka ::TopTree
 		protected:
 			using Integrity = TopTreeIntegrity<TUserData...>; friend Integrity;
 
@@ -44,12 +66,11 @@ namespace TopTreeInternals {
 			virtual void link(Vertex u, Vertex v, TUserData... userData) = 0;
 			virtual std::tuple<TUserData...> cut(Vertex u, Vertex v) = 0;
 
-
-			template <int TUserDataIndex = 0, bool onExposedPath = false, class TSelect>
+			template <int I = 0, bool onExposedPath = false, class TSelect>
 			void search(TSelect select); // not virtual; redeclare using std:function if needed
 
-			template <int TUserDataIndex = 0, class TSelect>
-			void pathSearch(TSelect select) { search<TUserDataIndex, true>(select); };
+			template <int I = 0, class TSelect>
+			void pathSearch(TSelect select) { search<I, true>(select); };
 
 
 			Vertex newVertex() {
@@ -61,30 +82,24 @@ namespace TopTreeInternals {
 				return vertexToNode.size();
 			}
 
-			bool sameComponent(Vertex u, Vertex v) { // XXX requires rollback
-				if (u == v) return true;
-				Node *uNode = vertexToNode[u];
-				Node *vNode = vertexToNode[v];
-				return uNode && vNode && (treeRoot(uNode) == treeRoot(vNode));
-			}
+			// Direct connectivity queries may be removed in future versions
+			// in favour of expose.
+			bool sameComponent(Vertex u, Vertex v);
 
-			std::tuple<TUserData...> getRootData() {
-				assert(exposedRoot);
-				return exposedRoot->userData;
-			}
-			//void setRootData(const TUserData... &userData); // (or maybe set one userData at a time)
+			// Returned root data may be accessed and modified
+			// until next call to any method.
+			template <int I = 0>
+			auto &getRootData();
 
-			std::pair<Vertex, Vertex> getBoundary() {
-				assert(exposedRoot);
-				return {exposedRoot->boundary[0], exposedRoot->boundary[1]};
-			}
+			// Getting edge data should be used only if we know
+			// that current boundary vertices are connected by an edge.
+			// It is a shortcut for performing cut and link on that edge
+			// and may be removed in future versions.
+			template <int I = 0>
+			auto &getEdgeData();
 
-			// User can request which data of TUserData... should be updated and which not.
-			// The TopTree changes the state as soon as it is consistent
-			// and then calls split/join only on active data.
-			//void setActiveData(bool.../*somehow make number of parameters the same as of TUserData*/ activeUserData);
+			std::pair<Vertex, Vertex> getBoundary();
 
-			// ...
 
 		protected:  // to be accessible by driver
 
@@ -104,13 +119,10 @@ namespace TopTreeInternals {
 					// boundary[i] should be in children[i]->boundary;
 				ClusterType clusterType;
 				std::tuple<TUserData...> userData;
-				bool userDataChanged[sizeof...(TUserData)];
-				bool userDataValid = false;
+				bool userDataValid[sizeof...(TUserData)] = {};
 				Node *tmpListNode = nullptr;
 				Node *rollbackListNode = nullptr;
 				bool tmpMark = false;
-				// Node *temporalListOfNodes; // several such lists for different purposes
-				// ...
 
 				Vertex getOtherVertex(Vertex vertex) {
 					return boundary[ boundary[0] == vertex ];
@@ -128,19 +140,14 @@ namespace TopTreeInternals {
 
 				std::tuple<NodeInPath, NodeInPath> getChildren(Vertex firstVertex = nullptr, bool rev = false);
 
-				template <std::size_t... Is>
-				void userDataSplitSeq(std::index_sequence<Is...>);
+				template <size_t I>
+				EventData<typename std::tuple_element<I, std::tuple<TUserData...>>::type> getEventData();
 
-				void userDataSplit() {
-					userDataSplitSeq(std::index_sequence_for<TUserData...>{});
-				}
+				template <size_t I>
+				void userDataSplit();
 
-				template <std::size_t... Is>
-				void userDataJoinSeq(std::index_sequence<Is...>);
-
-				void userDataJoin() {
-					userDataJoinSeq(std::index_sequence_for<TUserData...>{});
-				}
+				template <size_t I>
+				void userDataJoin();
 
 				// For base cluster use setBoundary;
 				// for non-base cluster use either attachChildren, or twice attachChild and setBoundary.
@@ -175,51 +182,29 @@ namespace TopTreeInternals {
 
 			std::vector<Node*> vertexToNode; // topmost nodes having given vertex as inner vertex, or root
 
-			bool activeUserData[sizeof...(TUserData)];    // currently active user data
-			bool activeUserDataReq[sizeof...(TUserData)]; // requested state
-
 
 			// To correctly handle user data when tree is being changed,
-			// driver should always call releaseNode before changing its children;
-			// then it can perform arbitrary changes (in any order);
-			// finally it should call validateTree on new tree root(s).
+			// driver should always call releaseNode before changing its children.
 
 			// Calls split on node and all ancestors with valid user data top-down
 			// marking them invalid.
-			void releaseNode(Node *node) {
-				assert(node->clusterType != ClusterType::BASE);
-				InnerList<Node, &Node::tmpListNode> nodes;
-				while (node && node->userDataValid) {
-					nodes.push(node);
-					node = node->parent;
-				}
-				while (Node *node = nodes.pop()) {
-					node->userDataSplit();
-					node->userDataValid = false;
-				}
-			}
+			void releaseNode(Node *node);
 
-			void releaseJustNode(Node *node) {
-				assert(!node->parent || !node->parent->userDataValid);
-				if (node->userDataValid) {
-					node->userDataSplit();
-					node->userDataValid = false;
-				}
-			}
+			// Calls split only on given node assuming invalid data of ancestors.
+			void releaseJustNode(Node *node);
+
+			// As releaseNode but only for user data of indices given by template arguments.
+			template <size_t I, size_t... Is>
+			void releaseNodeData(Node *node, std::index_sequence<I, Is...> = std::index_sequence<I, Is...>());
+
+			// As releaseJustNode but only for user data of indices given by template arguments.
+			template <std::size_t... Is>
+			void releaseJustNodeData(Node *node, std::index_sequence<Is...> = std::index_sequence<Is...>());
 
 			// Calls join on all descendants with invalid user data bottom-up
-			// marking them valid.
-			void validateTree(Node *root) {
-				for (Node *node : root->postorder([](Node *node){return !node->userDataValid;})) {
-					assert(node->clusterType != ClusterType::BASE);
-					node->userDataJoin();
-					node->userDataValid = true;
-				}
-			}
-
-			// validateTree can be called either at the end of link/cut/(expose) operation,
-			// or at the beginning of the following expose/search/... operation
-			// allowing composite updates.
+			// marking them valid, only for user data of index given by template argument.
+			template <size_t I>
+			void validateUserData(Node *root);
 
 
 			// -- tree structure manipulation --
@@ -270,7 +255,10 @@ namespace TopTreeInternals {
 	};
 
 
-	// --- TopTree methods' implementation ---
+
+	// === TopTree methods' implementation ===
+
+	// --- default implementation of top tree structure maintenance  ---
 
 	template <class... TUserData>
 	inline typename TopTree<TUserData...>::NodeInPath TopTree<TUserData...>::joinNodesInPath(NodeInPath np1, NodeInPath np2) {
@@ -334,7 +322,6 @@ namespace TopTreeInternals {
 
 		while (npM.node) {
 			assert(npM.node->clusterType != BASE);
-			releaseJustNode(npM.node);
 			rollbackList.push(npM.node);
 
 			if ((vL == u) || (vL == v)) {
@@ -424,7 +411,6 @@ namespace TopTreeInternals {
 		exposedRoot = npR.node;
 
 		assert(Integrity::treeConsistency(exposedRoot));
-		validateTree(exposedRoot);
 		return true;
 	};
 
@@ -437,7 +423,7 @@ namespace TopTreeInternals {
 	};
 
 	template <class... TUserData>
-	template <int TUserDataIndex, bool onExposedPath, class TSelect>
+	template <int I, bool onExposedPath, class TSelect>
 	inline void TopTree<TUserData...>::search(TSelect select) {
 		if (!exposedRoot || (exposedRoot->clusterType == BASE)) {
 			return;
@@ -459,7 +445,6 @@ namespace TopTreeInternals {
 
 			// npL, npR are not set at this point; npRL is empty; npLR should be split
 
-			releaseJustNode(npLR.node);
 			rollbackList.push(npLR.node);
 
 			std::tie(npLR, npRL) = npLR.node->getChildren(vM, true);
@@ -476,16 +461,9 @@ namespace TopTreeInternals {
 			} else {
 				NodeInPath npRoot = joinNodesInPath(npL, npR);
 				assert(Integrity::treeConsistency(npRoot.node));
-				validateTree(npRoot.node); // XXX not all user data need updating here
+				validateUserData<I>(npRoot.node);
 
-				reverse = select(
-					npRoot.node->clusterType,
-					std::get<TUserDataIndex>(npRoot.node->userData),
-					std::get<TUserDataIndex>(npRoot.node->children[0]->userData),
-					std::get<TUserDataIndex>(npRoot.node->children[1]->userData),
-					npRoot.node->boundary[0],
-					npRoot.node->boundary[1],
-					npRoot.node->getInnerVertex());
+				reverse = select(npRoot.node->template getEventData<I>());
 				reverse ^= npRoot.node->children[0] != npL.node;
 
 				releaseJustNode(npRoot.node);
@@ -521,7 +499,6 @@ namespace TopTreeInternals {
 
 		exposedRoot = npRoot.node;
 		assert(Integrity::treeConsistency(exposedRoot));
-		validateTree(exposedRoot);
 	}
 
 	template <class... TUserData>
@@ -554,17 +531,114 @@ namespace TopTreeInternals {
 				}
 			}
 
-			validateTree(exposedRoot);
 			return true;
 		}
 		return false;
 	}
 
-	// --- TopTree::Node methods' implementation ---
 
+	// --- queries ---
 
 	template <class... TUserData>
-	std::tuple<typename TopTree<TUserData...>::NodeInPath, typename TopTree<TUserData...>::NodeInPath> TopTree<TUserData...>::Node::getChildren(Vertex firstVertex, bool rev) {
+	inline bool TopTree<TUserData...>::sameComponent(Vertex u, Vertex v) {
+		if (u == v) return true;
+		rollback();
+		Node *uNode = vertexToNode[u];
+		Node *vNode = vertexToNode[v];
+		return uNode && vNode && (treeRoot(uNode) == treeRoot(vNode));
+	}
+
+	template <class... TUserData>
+	inline std::pair<Vertex, Vertex> TopTree<TUserData...>::getBoundary() {
+		assert(exposedRoot);
+		return {exposedRoot->boundary[0], exposedRoot->boundary[1]};
+	}
+
+	template <class... TUserData>
+	template <int I>
+	inline auto &TopTree<TUserData...>::getRootData() {
+		assert(exposedRoot);
+		validateUserData<I>(exposedRoot);
+		return std::get<I>(exposedRoot->userData);
+	}
+
+	template <class... TUserData>
+	template <int I>
+	inline auto &TopTree<TUserData...>::getEdgeData() {
+		assert(exposedRoot);
+		Node *node = exposedRoot;
+		while (node->clusterType != BASE) {
+			assert(node->clusterType == RAKE);
+			releaseJustNodeData<I>(node);
+			node = node->children[0];
+		}
+
+		return std::get<I>(node->userData);
+	}
+
+
+	// --- internal user data manipulation ---
+
+	template <class... TUserData>
+	inline void TopTree<TUserData...>::releaseNode(Node *node) {
+		releaseNodeData(node, std::index_sequence_for<TUserData...>());
+	}
+
+	template <class... TUserData>
+	inline void TopTree<TUserData...>::releaseJustNode(Node *node) {
+		releaseJustNodeData(node, std::index_sequence_for<TUserData...>());
+	}
+
+	template <class... TUserData>
+	template <std::size_t... Is>
+	inline void TopTree<TUserData...>::releaseJustNodeData(Node *node, std::index_sequence<Is...>) {
+		(void)std::initializer_list<int>{
+			(node->userDataValid[Is] ? (node->template userDataSplit<Is>(), 0) : 0)...
+		};
+	}
+
+	template <class... TUserData>
+	template <size_t I, size_t... Is>
+	inline void TopTree<TUserData...>::releaseNodeData(Node *node, std::index_sequence<I, Is...>) {
+		assert(node->clusterType != ClusterType::BASE);
+		Node *origNode = node;
+		InnerList<Node, &Node::tmpListNode> nodes;
+		while (node && node->userDataValid[I]) {
+			nodes.push(node);
+			node = node->parent;
+		}
+		while (Node *node = nodes.pop()) {
+			assert(node->userDataValid[I]);
+			node->template userDataSplit<I>();
+		}
+		if constexpr(sizeof...(Is) > 0) {
+			releaseNodeData<Is...>(origNode);
+		}
+	}
+
+	template <class... TUserData>
+	template <size_t I>
+	inline void TopTree<TUserData...>::validateUserData(Node *root) {
+		assert(root);
+		if (root->userDataValid[I]) return;
+		for (Node *node = rollbackList.front(); node; node = rollbackList.next(node)) {
+			if (node->userDataValid[I]) {
+				node->template userDataSplit<I>();
+			}
+		}
+		for (Node *node : root->postorder([](Node *node){return !node->userDataValid[I];})) {
+			assert(node->clusterType != ClusterType::BASE);
+			node->template userDataJoin<I>();
+		}
+	}
+
+
+	// === TopTree::Node methods' implementation ===
+
+	// --- tree structure manipulation ---
+
+	template <class... TUserData>
+	inline std::tuple<typename TopTree<TUserData...>::NodeInPath, typename TopTree<TUserData...>::NodeInPath> TopTree<TUserData...>::Node::getChildren(Vertex firstVertex, bool rev) {
 		assert(clusterType != BASE);
 		rev ^= (boundary[0] != firstVertex);
 		NodeInPath ret[2] = {
@@ -573,46 +647,9 @@ namespace TopTreeInternals {
 		return std::tuple(ret[rev], ret[!rev]);
 	}
 
-	// TODO: split and join only if enabled for user data
 
 	template <class... TUserData>
-	template <std::size_t... Is>
-	void TopTree<TUserData...>::Node::userDataSplitSeq(std::index_sequence<Is...>) {
-		Vertex innerVertex = this->getInnerVertex();
-		(void)std::initializer_list<int>{
-			(std::get<Is>(userData).split(
-				clusterType,
-				std::get<Is>(this->userData),
-				std::get<Is>(children[0]->userData),
-				std::get<Is>(children[1]->userData),
-				boundary[0],
-				boundary[1],
-				innerVertex
-			), 0)...
-		};
-	}
-
-
-	template <class... TUserData>
-	template <std::size_t... Is>
-	void TopTree<TUserData...>::Node::userDataJoinSeq(std::index_sequence<Is...>) {
-		Vertex innerVertex = this->getInnerVertex();
-		(void)std::initializer_list<int>{
-			(std::get<Is>(userData).join(
-				clusterType,
-				std::get<Is>(this->userData),
-				std::get<Is>(children[0]->userData),
-				std::get<Is>(children[1]->userData),
-				boundary[0],
-				boundary[1],
-				innerVertex
-			), 0)...
-		};
-	}
-
-
-	template <class... TUserData>
-	typename TopTree<TUserData...>::Node *TopTree<TUserData...>::Node::attachChildren(ClusterType type, Node *child1, Node *child2) {
+	inline typename TopTree<TUserData...>::Node *TopTree<TUserData...>::Node::attachChildren(ClusterType type, Node *child1, Node *child2) {
 		attachChild(0, child1);
 		attachChild(1, child2);
 		setBoundary(type);
@@ -620,14 +657,14 @@ namespace TopTreeInternals {
 	}
 
 	template <class... TUserData>
-	typename TopTree<TUserData...>::Node *TopTree<TUserData...>::Node::attachChild(int childIndex, Node* child) {
+	inline typename TopTree<TUserData...>::Node *TopTree<TUserData...>::Node::attachChild(int childIndex, Node* child) {
 		this->children[childIndex] = child;
 		child->parent = this;
 		return this;
 	}
 
 	template <class... TUserData>
-	typename TopTree<TUserData...>::Node *TopTree<TUserData...>::Node::detach() {
+	inline typename TopTree<TUserData...>::Node *TopTree<TUserData...>::Node::detach() {
 		Node *p = this->parent;
 		if (p) {
 			assert(p->children[ p->children[0] != this ] == this);
@@ -638,7 +675,7 @@ namespace TopTreeInternals {
 	}
 
 	template <class... TUserData>
-	typename TopTree<TUserData...>::Node *TopTree<TUserData...>::Node::detachChildren() {
+	inline typename TopTree<TUserData...>::Node *TopTree<TUserData...>::Node::detachChildren() {
 		for (size_t i : {0, 1}) {
 			if (this->children[i]) {
 				this->children[i]->detach();
@@ -647,8 +684,43 @@ namespace TopTreeInternals {
 		return this;
 	}
 
+
+	// --- user data manipulation ---
+
 	template <class... TUserData>
-	void TopTree<TUserData...>::Node::setBoundary(ClusterType type) { // for COMPRESS or RAKE node
+	template <size_t I>
+	inline EventData<typename std::tuple_element<I, std::tuple<TUserData...>>::type> TopTree<TUserData...>::Node::getEventData() {
+		return EventData<typename std::tuple_element<I, std::tuple<TUserData...>>::type>(
+			clusterType,
+			std::get<I>(this->userData),
+			std::get<I>(children[0]->userData),
+			std::get<I>(children[1]->userData),
+			boundary,
+			this->getInnerVertex());
+	}
+
+	template <class... TUserData>
+	template <size_t I>
+	inline void TopTree<TUserData...>::Node::userDataSplit() {
+		assert(userDataValid[I]);
+		std::tuple_element<I, decltype(userData)>::type::split(getEventData<I>());
+		userDataValid[I] = false;
+	}
+
+	template <class... TUserData>
+	template <size_t I>
+	inline void TopTree<TUserData...>::Node::userDataJoin() {
+		assert(!userDataValid[I]);
+		assert(children[0]->userDataValid[I] && children[1]->userDataValid[I]);
+		std::tuple_element<I, decltype(userData)>::type::join(getEventData<I>());
+		userDataValid[I] = true;
+	}
+
+
+	// --- cluster type and boundary ---
+
+	template <class... TUserData>
+	inline void TopTree<TUserData...>::Node::setBoundary(ClusterType type) { // for COMPRESS or RAKE node
 		this->clusterType = type;
 		auto [child1, child2] = this->children;
 		assert((type != BASE) && child1 && child2);
@@ -667,12 +739,12 @@ namespace TopTreeInternals {
 	}
 
 	template <class... TUserData>
-	void TopTree<TUserData...>::Node::setBoundary(Vertex v1, Vertex v2) { // for BASE node
+	inline void TopTree<TUserData...>::Node::setBoundary(Vertex v1, Vertex v2) { // for BASE node
 		assert((this->children[0] == nullptr) && (this->children[1] == nullptr));
 		this->clusterType = BASE;
 		this->boundary[0] = v1;
 		this->boundary[1] = v2;
-		this->userDataValid = true;
+		for (bool &valid : this->userDataValid) valid = true;
 	}
 
 }
@@ -680,6 +752,9 @@ namespace TopTreeInternals {
 using TopTreeClusterType = TopTreeInternals::ClusterType;
 using TopTreeVertex = TopTreeInternals::Vertex;
 using TopTreeInternals::TopTree;
+
+template <class TUserData>
+using TopTreeEventData = TopTreeInternals::EventData<TUserData>;
 
 #undef assert
 #endif
