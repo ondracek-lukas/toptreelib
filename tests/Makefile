@@ -3,13 +3,15 @@
 .PHONY: all %.test
 .PRECIOUS: %.out
 
-all: InnerListUnitTest.test TopTreeUnitTest.test
+TopTreeTest.test:
+all: InnerListTest.test TopTreeBaseTest.test TopTreeTest.test
 
 %.test: %.out
 	ulimit -c0; time ./$<
 
-InnerListUnitTest.out: ../TopTreeInternals/InnerList.hpp
-TopTreeUnitTest.out: ../TopTree.hpp ../TopTreeInternals/*.hpp TopTreeIntegrity.hpp
+InnerListTest.out: ../TopTreeInternals/InnerList.hpp
+TopTreeBaseTest.out: ../TopTree.hpp ../TopTreeInternals/*.hpp TopTreeIntegrity.hpp
+TopTreeTest.out: ../TopTree.hpp ../BiasedTreeTopTree.hpp ../TopTreeInternals/*.hpp TopTreeIntegrity.hpp
 
 %.out: %.cpp
 	g++ -std=c++17 $< -o $@ -fdiagnostics-color=always -g

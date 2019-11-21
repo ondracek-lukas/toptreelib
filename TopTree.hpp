@@ -209,27 +209,32 @@ namespace TopTreeInternals {
 
 			// -- tree structure manipulation --
 
-			// Methods newNode and deleteNode can be redefined (masked) in driver
-			// to add further functionality,
-			// the original methods should be called from new ones.
+			// Methods newNode() and deleteNode(Node) can be redefined (masked) in driver
+			// to allow allocation of derived node instances;
+			// the templated counterparts should be called from them.
 			// All nodes created by the base class are deleted in rollabck method.
 
 			size_t nodesAllocated = 0;
 			InnerList<Node, &Node::tmpListNode> freeNodes;
 
-			Node *newNode() {
-				Node *node = freeNodes.pop();
+			template <class TNode>
+			TNode *newNodeT(InnerList<Node, &Node::tmpListNode> freeTNodes) {
+				TNode *node = static_cast<TNode *>(freeTNodes.pop());
 				if (!node) {
-					node = new Node;
+					node = new TNode;
 					node->index = nodesAllocated++;
 				}
 				return node;
 			}
+			Node *newNode() { return newNodeT<Node>(freeNodes); }
 
-			void deleteNode(Node *node) { // TODO: add deallocation in TopTree destructor
-				assert(!node->parent && !node->children[0] && !node->children[1]);
-				freeNodes.push(node);
+			template <class TNode> // templating may be used later
+			void deleteNodeT(Node *node, InnerList<Node, &Node::tmpListNode> freeTNodes) {
+				// TODO: add deallocation in TopTree destructor
+				assert(node && !node->parent && !node->children[0] && !node->children[1]);
+				freeTNodes.push(node);
 			}
+			void deleteNode(Node *node) { deleteNodeT<Node>(node, freeNodes); }
 
 			void vertexToNodeUpdateInner(Node *node) {
 				vertexToNode[node->getInnerVertex()] = node;
