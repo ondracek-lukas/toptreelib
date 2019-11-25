@@ -1,22 +1,14 @@
 // TopTreeLibrary  Copyright (C) 2019  Lukáš Ondráček <ondracek@ktiml.mff.cuni.cz>, use under GNU GPLv3
 
 /* Integrity tests for TopTree class.
- * Set TOP_TREE_INTEGRITY_LEVEL macro to enable:
- *   0  disabled,
- *   1  tests preserving asymptotic complexity only,
- *   2  all tests enabled.
+ * Set TOP_TREE_INTEGRITY macro to enable tests.
+ * Adjust global variable TopTreeIntegrityLevel to:
+ *   0  disable most of the tests,
+ *   1  enable tests preserving asymptotic complexity only,
+ *   2  enable all tests (default).
  */
 
-#if TOP_TREE_INTEGRITY_LEVEL > 0
-#ifndef TOP_TREE_INTEGRITY
-#define TOP_TREE_INTEGRITY
-
-#include <cstdio>
-#include <vector>
-
-namespace TopTreeInternals {
-	template <class... TUserData>
-	class TopTree;
+#ifdef TOP_TREE_INTEGRITY
 
 #define assert_STR(expr) #expr
 #define assert(cond) { \
@@ -26,10 +18,22 @@ namespace TopTreeInternals {
 			abort(); \
 		}}
 
+#ifndef TOP_TREE_INTEGRITY_HPP
+#define TOP_TREE_INTEGRITY_HPP
+
+#include <cstdio>
+#include <vector>
+size_t TopTreeIntegrityLevel = 2;
+
+
+namespace TopTreeInternals {
+	template <class... TUserData>
+	class TopTree;
+
 #define FAIL_HERE { printf("\n\nIntegrity test failed at " __FILE__ ":%d\n", __LINE__); return false; }
 #define TEST(cond) {if (!(cond)) FAIL_HERE; }
 #define TEST2(cond) { int I = 0; TEST(cond); I = 1; TEST(cond); }
-#define REQUIRE_LEVEL(level) {if (TOP_TREE_INTEGRITY_LEVEL < level) return true; }
+#define REQUIRE_LEVEL(level) {if (TopTreeIntegrityLevel < level) return true; }
 
 	template <class... TUserData>
 	class TopTreeIntegrity {

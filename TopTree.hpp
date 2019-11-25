@@ -17,10 +17,12 @@ namespace TopTreeInternals {
 	typedef int Vertex; // aka ::TopTreeVertex, vertex of underlying tree
 }
 
-#if TOP_TREE_INTEGRITY_LEVEL > 0
+#ifdef TOP_TREE_INTEGRITY
 #include "tests/TopTreeIntegrity.hpp"
 #else
-template <class... TUserData> class TopTreeIntegrity {};
+namespace TopTreeInternals {
+	template <class... TUserData> class TopTreeIntegrity {};
+}
 #define assert(cond)
 #endif
 

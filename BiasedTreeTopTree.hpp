@@ -1,8 +1,9 @@
-#ifndef BIASED_TREE_TOP_TREE
-#define BIASED_TREE_TOP_TREE
+// TopTreeLibrary  Copyright (C) 2019  Lukáš Ondráček <ondracek@ktiml.mff.cuni.cz>, use under GNU GPLv3
+
+#ifndef BIASED_TREE_TOP_TREE_HPP
+#define BIASED_TREE_TOP_TREE_HPP
 
 /* TODO:
- *   integrity tests;
  *   splice;
  *   reroot, symmetrize;
  *   link, cut;
@@ -13,20 +14,22 @@
 #include <iostream> // XXX tmp
 #include <algorithm>
 
-#define assert_STR(expr) #expr
-#define assert(cond) { \
-		if (!(cond)) { \
-			printf("Assertion [" assert_STR(cond) "] failed at " __FILE__ ":%d\n\n", __LINE__); \
-			fflush(stdout); \
-			abort(); \
-		}}
+#ifdef TOP_TREE_INTEGRITY
+#include "tests/BiasedTreeTopTreeIntegrity.hpp"
+#else
+namespace TopTreeInternals {
+	template <class... TUserData> class BiasedTreeTopTreeIntegrity {};
+}
+#define assert(cond)
+#endif
 
 namespace TopTreeInternals {
 
 	template <class... TUserData>
 	class BiasedTreeTopTree : public TopTree<TUserData...> {
 		protected:
-			using Integrity = typename TopTree<TUserData...>::Integrity; // TODO EIntegrity for BTTT
+			using Integrity = typename TopTree<TUserData...>::Integrity;
+			using EIntegrity = BiasedTreeTopTreeIntegrity<TUserData...>; friend EIntegrity;
 		private:
 			struct ENode;
 
@@ -80,6 +83,7 @@ namespace TopTreeInternals {
 				for (auto &node : nodes) {
 					node = newNode();
 					Vertex u = v; v = this->newVertex();
+					if (v == 11) u = 5;
 					node->setBoundary(u, v);
 				}
 
@@ -294,12 +298,13 @@ namespace TopTreeInternals {
 
 		if (middleNode) {
 			middleNode->template setLeafData<TTreeType, true>();
-			ENode *node = newNode();
 			ClusterType nodeType = (TTreeType == RAKE) || middleNode->isRakeTreeNode() ? RAKE : COMPRESS;
 			if (leftTree) {
+				ENode *node = newNode();
 				node->template attachChildren<TTreeType>(nodeType, leftTree, middleNode);
 				leftTree = node;
 			} else if (rightTree) {
+				ENode *node = newNode();
 				if constexpr(TTreeType == RAKE) {
 					node->template attachChildren<TTreeType>(nodeType, middleNode, rightTree); // preserve order
 				} else {
@@ -312,15 +317,15 @@ namespace TopTreeInternals {
 		}
 
 		if (leftTree == nullptr) {
-			assert(Integrity::treeConsistency(rightTree));
+			assert(EIntegrity::treeConsistency(rightTree));
 			return rightTree;
 		} else if (rightTree == nullptr) {
-			assert(Integrity::treeConsistency(leftTree));
+			assert(EIntegrity::treeConsistency(leftTree));
 			return leftTree;
 		} else {
 			ENode *root = newNode();
 			root->template attachChildren<TTreeType>(TTreeType, leftTree, rightTree);
-			assert(Integrity::treeConsistency(root));
+			assert(EIntegrity::treeConsistency(root));
 			return root;
 		}
 	}
@@ -382,8 +387,8 @@ namespace TopTreeInternals {
 			middleNode = parent;
 		}
 
-		assert(Integrity::treeConsistency(left));
-		assert(Integrity::treeConsistency(right));
+		assert(EIntegrity::treeConsistency(left));
+		assert(EIntegrity::treeConsistency(right));
 		
 		return {left, middleRet, right};
 	}

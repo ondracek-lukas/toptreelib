@@ -1,6 +1,6 @@
 // TopTreeLibrary  Copyright (C) 2019  Lukáš Ondráček <ondracek@ktiml.mff.cuni.cz>, use under GNU GPLv3
 
-#define TOP_TREE_INTEGRITY_LEVEL 2
+#define TOP_TREE_INTEGRITY
 #include "../BiasedTreeTopTree.hpp"
 
 #include <cassert>

@@ -3,7 +3,6 @@
 .PHONY: all %.test
 .PRECIOUS: %.out
 
-TopTreeTest.test:
 all: InnerListTest.test TopTreeBaseTest.test TopTreeTest.test
 
 %.test: %.out
@@ -11,7 +10,7 @@ all: InnerListTest.test TopTreeBaseTest.test TopTreeTest.test
 
 InnerListTest.out: ../TopTreeInternals/InnerList.hpp
 TopTreeBaseTest.out: ../TopTree.hpp ../TopTreeInternals/*.hpp TopTreeIntegrity.hpp
-TopTreeTest.out: ../TopTree.hpp ../BiasedTreeTopTree.hpp ../TopTreeInternals/*.hpp TopTreeIntegrity.hpp
+TopTreeTest.out: ../TopTree.hpp ../BiasedTreeTopTree.hpp ../TopTreeInternals/*.hpp TopTreeIntegrity.hpp BiasedTreeTopTreeIntegrity.hpp
 
 %.out: %.cpp
 	g++ -std=c++17 $< -o $@ -fdiagnostics-color=always -g
