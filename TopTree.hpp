@@ -165,7 +165,7 @@ namespace TopTreeInternals {
 			};
 
 			Node *treeRoot(Node *node) {
-				assert(node);
+				if (!node) return nullptr;
 				while (node->parent) node = node->parent;
 				return node;
 			}

@@ -58,7 +58,7 @@ namespace TopTreeInternals {
 					bool top_root               = !parent;
 					bool top_leaf               = node->clusterType == BASE;
 					bool rake_node              = node->rakeMaxWeight;
-					bool rake_leaf              = rake_node && !top_leaf && (!children[0]->rakeMaxWeight || !children[1]->rakeMaxWeight);
+					bool rake_leaf              = rake_node && (top_leaf || !children[0]->rakeMaxWeight || !children[1]->rakeMaxWeight);
 					bool rake_root              = rake_node && (top_root || !sibling->rakeMaxWeight);
 					bool compress_root          = rake_leaf || (top_root && !rake_node);
 					bool compress_leaf_root     = compress_root && top_leaf;
@@ -76,7 +76,7 @@ namespace TopTreeInternals {
 							if (index < children[0]->index) index = children[0]->index;
 							if (index < children[1]->index) index = children[1]->index;
 						}
-						if (accum.size() < index) accum.resize(index + 1);
+						if (accum.size() <= index) accum.resize(index + 1);
 					}
 
 					// weight
@@ -98,6 +98,7 @@ namespace TopTreeInternals {
 					// accum -- minWeightDiff, minWeightDiffDeferred
 					if (compress_node) {
 						if (compress_leaf_non_root) {
+							// std::cout << "(" << node->boundary[0] << " " << node->boundary[1] << ")" << std::endl;
 							// for (int I : {0, 1}) std::cout << accum[node->index].minWeightDiff[I] << " == " << accum[node->index].bottomWeight[I] << " - " << node->rakeMaxWeight << std::endl;
 							TEST2(accum[node->index].minWeightDiff[I] == accum[node->index].bottomWeight[I] - node->rakeMaxWeight);
 						}
@@ -112,6 +113,8 @@ namespace TopTreeInternals {
 								}
 							}
 							if (compress_leaf_root) {
+								// std::cout << accum[node->index].minWeightDiff[0] << " == 0" << std::endl;
+								// std::cout << accum[node->index].minWeightDiff[1] << " == 0" << std::endl;
 								TEST2(accum[node->index].minWeightDiff[I] == 0);
 							}
 						}
@@ -120,8 +123,8 @@ namespace TopTreeInternals {
 								bool rev = accum[node->index].reversed;
 								bool childRev = rev ^ (node->boundary[i] != children[i]->boundary[i]);
 								accum[children[i]->index].reversed = childRev;
-								accum[children[i]->index].bottomWeight[i ^ childRev]   = accum[node->index].bottomWeight[i ^ rev];
-								accum[children[i]->index].bottomWeight[i ^ !childRev]  = accum[node->index].bottomWeight[i ^ !rev] + children[!i]->weight;
+								accum[children[i]->index].bottomWeight[i ^ childRev ^ rev]   = accum[node->index].bottomWeight[i];
+								accum[children[i]->index].bottomWeight[!i ^ childRev ^ rev]  = accum[node->index].bottomWeight[!i] + children[!i]->weight;
 								accum[children[i]->index].minWeightDiff[childRev]  = accum[node->index].minWeightDiff[rev]  + children[i]->minWeightDiff[childRev];
 								accum[children[i]->index].minWeightDiff[!childRev] = accum[node->index].minWeightDiff[!rev] + children[i]->minWeightDiff[!childRev];
 							}
@@ -136,7 +139,8 @@ namespace TopTreeInternals {
 
 					// types of nodes and shared vertices in rake trees
 					if (compress_node && (compress_root || !rake_root) && node->clusterType == RAKE) {
-						TEST((children[0]->clusterType != RAKE) && children[1]->rakeMaxWeight);
+						TEST(!children[0]->rakeMaxWeight && children[1]->rakeMaxWeight);
+						TEST((children[0]->clusterType != RAKE) || (children[0]->boundary[1] != node->boundary[1]));
 					}
 					if (rake_node && !rake_leaf) {
 						TEST(node->clusterType == RAKE);
