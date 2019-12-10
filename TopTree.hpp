@@ -127,6 +127,7 @@ namespace TopTreeInternals {
 				bool tmpMark = false;
 
 				Vertex getOtherVertex(Vertex vertex) {
+					assert((boundary[0] == vertex) || (boundary[1] == vertex));
 					return boundary[ boundary[0] == vertex ];
 				}
 

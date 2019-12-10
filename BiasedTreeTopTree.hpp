@@ -4,7 +4,6 @@
 #define BIASED_TREE_TOP_TREE_HPP
 
 /* TODO:
- *   cut;
  *   biased-tree-balancing join/split;
  */
 
@@ -160,13 +159,6 @@ namespace TopTreeInternals {
 					return this->boundary[i] != this->children[i]->boundary[i];
 				}
 
-				void reverse() {
-					std::swap(this->boundary[0], this->boundary[1]);
-					std::swap(this->children[0], this->children[1]);
-					std::swap(minWeightDiffDeferred[0], minWeightDiffDeferred[1]);
-					std::swap(minWeightDiff[0], minWeightDiff[1]);
-				}
-
 				bool isRakeTreeNode() {
 					return rakeMaxWeight;
 				}
@@ -220,10 +212,10 @@ namespace TopTreeInternals {
 			std::tuple<ENode *, ENode *, ENode *> split(ENode *tree, ENode *middleNode);
 
 			ENode *reroot(Vertex v);
-			ENode *rerootRecurse(Vertex v, InnerList<Node, &Node::tmpListNode> &splitNodes);
+			ENode *rerootRecurse(Vertex v, InnerList<Node, &Node::tmpListNode> &splitNodes, bool rootReversed);
 			ENode *symmetrize(Vertex v);
-			ENode *symmetrizeRecurse(ENode *cRoot);
-			std::tuple<ENode *, ENode *, ENode *, ENode *> spliceSplit(ENode *cRoot, ENode *cSplit, ENode *rSplit);
+			ENode *symmetrizeRecurse(Vertex v, ENode *cRoot);
+			std::tuple<ENode *, ENode *, ENode *, ENode *> spliceSplit(ENode *cRoot, ENode *cSplit, ENode *rSplit, bool cRootReversed);
 			ENode *spliceJoin(ENode *bottom, ENode *altBottom, ENode *rake, ENode *top);
 
 			template <ClusterType TTreeType>
@@ -236,14 +228,13 @@ namespace TopTreeInternals {
 			}
 
 			template <ClusterType TTreeType>
-			ENode *findHeavyNode(ENode *root) {
+			ENode *findHeavyNode(ENode *root, bool rev = false) {
 				if constexpr(TTreeType == COMPRESS) {
-					if (root->minWeightDiff[0] >= 0) {
+					if (root->minWeightDiff[rev] >= 0) {
 						return nullptr;
 					}
 				}
 				ENode *node = root;
-				bool rev = false;
 				int minWeightDiffAccum = 0;
 				while (!node->template isLeaf<TTreeType>(root)) {
 					int nextI = 0;
@@ -330,8 +321,10 @@ namespace TopTreeInternals {
 		ENode *tree = join<COMPRESS>(uTree, e, vTree);
 		this->markNodeAsRoot(tree);
 		tree = symmetrize(tree->boundary[1]);
+		/*
 		std::cout << "Linked: ";
 		debugPrintTree(tree);
+		*/
 		//debugPrintRawTree(tree);
 	}
 
@@ -339,7 +332,53 @@ namespace TopTreeInternals {
 	std::tuple<TUserData...>  BiasedTreeTopTree<TUserData...>::
 	cut(Vertex u, Vertex v) {
 		this->rollback();
-		assert(false);
+
+		ENode *node = ext(this->vertexToNode[v]);
+		assert(node); // interface assert, maybe use exception instead
+		if ((node->boundary[0] != u) && (node->boundary[1] != u)) {
+			std::swap(u, v);
+			node = ext(this->vertexToNode[v]);
+			assert(node && ((node->boundary[0] == u) || (node->boundary[1] == u))); // interface assert
+		}
+		if (node->clusterType != BASE) {
+			node = ext(node->children[node->boundary[1] == u]);
+			while (node->clusterType != BASE) {
+				assert((node->boundary[0] == u) || (node->boundary[1] == u));
+				assert((node->boundary[0] == v) || (node->boundary[1] == v));
+				assert(node->clusterType == RAKE);
+				node = ext(node->children[0]);
+			}
+		}
+		assert((node->boundary[0] == u) || (node->boundary[1] == u));
+		assert((node->boundary[0] == v) || (node->boundary[1] == v));
+
+		ENode *root = findRoot<COMPRESS>(node, false);
+		if (root->parent) {
+			Vertex w = root->getOtherVertex(root->parent->boundary[1]);
+			root = reroot(w);
+		}
+		this->markNodeAsNonRoot(root);
+		auto [tree1, edge, tree2] = split<COMPRESS>(root, node);
+		if (tree1) {
+			this->markNodeAsRoot(tree1);
+		}
+		if (tree2) {
+			this->markNodeAsRoot(tree2);
+		}
+		tree1 = symmetrize(u);
+		tree2 = symmetrize(v);
+
+		std::tuple<TUserData...> userData = edge->userData;
+		deleteNode(edge);
+
+		/*
+		std::cout << "Cut: \n  ";
+		debugPrintTree(tree1);
+		std::cout << "  ";
+		debugPrintTree(tree2);
+		*/
+
+		return userData;
 	}
 	
 
@@ -392,6 +431,7 @@ namespace TopTreeInternals {
 			}
 			node = prevNode;
 		}
+		bool rootReversed;
 		{
 			bool rev = false; // relative to node
 			int subpathsWeights[2] = {0, 0};
@@ -405,19 +445,17 @@ namespace TopTreeInternals {
 				node = ext(node->parent);
 				subpathsWeights[rev ^ !childI] += ext(node->children[!childI])->weight;
 			}
-			if (subpathsWeights[rev] > subpathsWeights[!rev]) {
-				node->reverse();
-			}
+			rootReversed = subpathsWeights[rev] > subpathsWeights[!rev];
 		}
 
-		node = rerootRecurse(v, splitNodes);
+		node = rerootRecurse(v, splitNodes, rootReversed);
 		this->markNodeAsRoot(node);
 		return node;
 	}
 
 	template <class... TUserData>
 	inline typename BiasedTreeTopTree<TUserData...>::ENode *BiasedTreeTopTree<TUserData...>::
-	rerootRecurse(Vertex v, InnerList<Node, &Node::tmpListNode> &splitNodes) {
+	rerootRecurse(Vertex v, InnerList<Node, &Node::tmpListNode> &splitNodes, bool rootReversed) {
 		ENode *cRoot = ext(splitNodes.pop());
 		ENode *cSplit = ext(splitNodes.pop());
 		if (!cSplit) {
@@ -433,9 +471,8 @@ namespace TopTreeInternals {
 		ENode *rSplit = ext(splitNodes.front());
 
 		bool newBottomReversed = rSplit && (cSplit->parent->boundary[1] != rSplit->boundary[1]);
-		auto [oldBottom, newBottom, rake, top] = spliceSplit(cRoot, cSplit, rSplit);
-		if (newBottomReversed) newBottom->reverse(); // XXX maybe maintain elsewhere
-		newBottom = rerootRecurse(v, splitNodes);
+		auto [oldBottom, newBottom, rake, top] = spliceSplit(cRoot, cSplit, rSplit, rootReversed);
+		newBottom = rerootRecurse(v, splitNodes, newBottomReversed);
 		return spliceJoin(newBottom, oldBottom, rake, top);
 	}
 
@@ -447,31 +484,30 @@ namespace TopTreeInternals {
 		if (!root) return nullptr;
 		assert(!root->parent);
 		this->markNodeAsNonRoot(root);
-		if (v != root->boundary[0]) {
-			root->reverse();
-		}
-
-		root = symmetrizeRecurse(root);
+		root = symmetrizeRecurse(v, root);
 		this->markNodeAsRoot(root);
 		return root;
 	}
 
 	template <class... TUserData>
 	inline typename BiasedTreeTopTree<TUserData...>::ENode *BiasedTreeTopTree<TUserData...>::
-	symmetrizeRecurse(ENode *cRoot) {
-		ENode *cSplit = this->template findHeavyNode<COMPRESS>(cRoot);
+	symmetrizeRecurse(Vertex v, ENode *cRoot) {
+		ENode *cSplit = this->template findHeavyNode<COMPRESS>(cRoot, cRoot->boundary[0] != v);
 		if (!cSplit) return cRoot;
 		ENode *rSplit = this->template findHeavyNode<RAKE>(cSplit);
-		auto [oldBottom, newBottom, rake, top] = spliceSplit(cRoot, cSplit, rSplit);
-		oldBottom = symmetrizeRecurse(oldBottom);
+		auto [oldBottom, newBottom, rake, top] = spliceSplit(cRoot, cSplit, rSplit, cRoot->boundary[0] != v);
+		if (oldBottom) {
+			oldBottom = symmetrizeRecurse(v, oldBottom);
+		}
 		return spliceJoin(newBottom, oldBottom, rake, top);
 	}
 
 
 	template <class... TUserData>
 	inline std::tuple<typename BiasedTreeTopTree<TUserData...>::ENode *, typename BiasedTreeTopTree<TUserData...>::ENode *,typename BiasedTreeTopTree<TUserData...>::ENode *, typename BiasedTreeTopTree<TUserData...>::ENode *> BiasedTreeTopTree<TUserData...>::
-	spliceSplit(ENode *cRoot, ENode *cSplit, ENode *rSplit) {
+	spliceSplit(ENode *cRoot, ENode *cSplit, ENode *rSplit, bool cRootReversed) {
 		auto [bottom, rake, top] = split<COMPRESS>(cRoot, cSplit);
+		if (cRootReversed) std::swap(bottom, top);
 		auto [rLeft, altBottom, rRight] = split<RAKE>(rake, rSplit);
 		ENode *newRake = join<RAKE>(rLeft, nullptr, rRight);
 		return {bottom, altBottom, newRake, top};
