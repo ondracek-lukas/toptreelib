@@ -7,6 +7,8 @@
 #ifndef TOP_TREE_INNER_LIST
 #define TOP_TREE_INNER_LIST
 
+#include <utility>
+
 #ifndef assert
 #define assert(cond)
 #endif
@@ -25,6 +27,15 @@ namespace TopTreeInternals {
 				node->*MNext = *listPtr;
 				*listPtr = node;
 			}
+			void insert(TNode **listPtr, InnerList<TNode, MNext> &&list) {
+				if (list.last) {
+					if (!*listPtr) last = list.last;
+					list.last->*MNext = *listPtr;
+					*listPtr = list.first;
+					list.first = nullptr;
+					list.last  = nullptr;
+				}
+			}
 
 			TNode *remove(TNode **listPtr, TNode *prev) {
 				TNode *node = *listPtr;
@@ -37,8 +48,25 @@ namespace TopTreeInternals {
 			}
 
 		public:
+			InnerList() = default;
+			InnerList(InnerList &&old) : first(old.first), last(old.last) {
+				old.first = nullptr;
+				old.last  = nullptr;
+			}
+			InnerList &operator=(InnerList &&old) {
+				while (pop());
+				first = old.first;
+				last  = old.last;
+				old.first = nullptr;
+				old.last = nullptr;
+				return *this;
+			}
+
 			TNode *front() {
 				return first;
+			}
+			TNode *back() {
+				return last;
 			}
 
 			TNode *next(TNode *node) {
@@ -47,8 +75,10 @@ namespace TopTreeInternals {
 			}
 
 			void insertAfter(TNode *after, TNode *node) {
-				assert(after);
-				insert(&(after->*MNext), node);
+				insert(after ? &(after->*MNext) : &first, node);
+			}
+			void insertAfter(TNode *after, InnerList<TNode, MNext> &&list) {
+				insert(after ? &(after->*MNext) : &first, std::move(list));
 			}
 
 			TNode *removeAfter(TNode *after) {
@@ -59,6 +89,9 @@ namespace TopTreeInternals {
 			void push(TNode *node) {
 				insert(&first, node);
 			}
+			void push(InnerList<TNode, MNext> &&list) {
+				insert(&first, std::move(list));
+			}
 
 			TNode *pop() {
 				return remove(&first, nullptr);
@@ -66,6 +99,9 @@ namespace TopTreeInternals {
 
 			void append(TNode *node) {
 				insert(last ? &(last->*MNext) : &first, node);
+			}
+			void append(InnerList<TNode, MNext> &&list) {
+				insert(last ? &(last->*MNext) : &first, std::move(list));
 			}
 
 			~InnerList() {

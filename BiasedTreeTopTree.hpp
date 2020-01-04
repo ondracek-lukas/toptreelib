@@ -264,6 +264,7 @@ namespace TopTreeInternals {
 			}
 			template <ClusterType TTreeType>
 			std::tuple<ENode *, ENode *> splitNode(ENode *node) {
+				assert(!node->parent);
 				this->releaseJustNode(node);
 				this->markVertexAsIsolated(node->getInnerVertex());
 				ENode *leftChild = ext(node->children[0]);

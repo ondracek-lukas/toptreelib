@@ -207,7 +207,9 @@ namespace TopTreeInternals {
 			// Calls join on all descendants with invalid user data bottom-up
 			// marking them valid, only for user data of index given by template argument.
 			template <size_t I>
-			void validateUserData(Node *root);
+			void validateUserData(Node *root, InnerList<Node, &Node::rollbackListNode> &splitList);
+			template <size_t I>
+			void validateUserData(Node *root) { validateUserData<I>(root, rollbackList); }
 
 
 			// -- tree structure manipulation --
@@ -215,13 +217,13 @@ namespace TopTreeInternals {
 			// Methods newNode() and deleteNode(Node) can be redefined (masked) in driver
 			// to allow allocation of derived node instances;
 			// the templated counterparts should be called from them.
-			// All nodes created by the base class are deleted in rollabck method.
+			// All nodes created by the base class are deleted in rollback method.
 
 			size_t nodesAllocated = 0;
 			InnerList<Node, &Node::tmpListNode> freeNodes;
 
 			template <class TNode>
-			TNode *newNodeT(InnerList<Node, &Node::tmpListNode> freeTNodes) {
+			TNode *newNodeT(InnerList<Node, &Node::tmpListNode> &freeTNodes) {
 				TNode *node = static_cast<TNode *>(freeTNodes.pop());
 				if (!node) {
 					node = new TNode;
@@ -232,7 +234,7 @@ namespace TopTreeInternals {
 			Node *newNode() { return newNodeT<Node>(freeNodes); }
 
 			template <class TNode> // templating may be used later
-			void deleteNodeT(Node *node, InnerList<Node, &Node::tmpListNode> freeTNodes) {
+			void deleteNodeT(Node *node, InnerList<Node, &Node::tmpListNode> &freeTNodes) {
 				// TODO: add deallocation in TopTree destructor
 				assert(node && !node->parent && !node->children[0] && !node->children[1]);
 				freeTNodes.push(node);
@@ -330,7 +332,8 @@ namespace TopTreeInternals {
 
 		while (npM.node) {
 			assert(npM.node->clusterType != BASE);
-			rollbackList.push(npM.node);
+			npM.node->tmpMark = false;
+			rollbackList.append(npM.node);
 
 			if ((vL == u) || (vL == v)) {
 				vL = npM.node->getOtherVertex(vL);
@@ -412,10 +415,8 @@ namespace TopTreeInternals {
 				npM.onPath = true;
 				vL = npM.node->getOtherVertex(vL);
 			}
-			if (npM.node) {
-				npM.node->tmpMark = false;
-			}
 		}
+		rollbackList.back()->tmpMark=true;
 		exposedRoot = npR.node;
 
 		assert(Integrity::treeConsistency(exposedRoot));
@@ -436,16 +437,21 @@ namespace TopTreeInternals {
 		if (!exposedRoot || (exposedRoot->clusterType == BASE)) {
 			return;
 		}
+
 		if (!onExposedPath) {
 			rollback();
 		}
+
+		InnerList<Node, &Node::rollbackListNode> tmpRollbackList = std::move(rollbackList);
+		Node *tmpRollbackListCurNode = nullptr;
+		Node *rollbackListCurNode = nullptr;
+
 
 		// We maintain path: npL = (npLL, npRR), vM, npR = (npRL, npRR)
 		// Inv.: npL either equals npLR, or is temporary; symmetrically for npR, npRL
 		NodeInPath npL, npLL, npLR, npR, npRL, npRR;
 		Vertex vM;
 
-		exposedRoot->tmpMark = true;
 		npL.node = npLR.node = exposedRoot;
 		vM = npLR.node->boundary[0];
 
@@ -453,7 +459,8 @@ namespace TopTreeInternals {
 
 			// npL, npR are not set at this point; npRL is empty; npLR should be split
 
-			rollbackList.push(npLR.node);
+			tmpRollbackList.insertAfter(tmpRollbackListCurNode, npLR.node);
+			tmpRollbackListCurNode = npLR.node;
 
 			std::tie(npLR, npRL) = npLR.node->getChildren(vM, true);
 			if (npRL.onPath) {
@@ -469,7 +476,11 @@ namespace TopTreeInternals {
 			} else {
 				NodeInPath npRoot = joinNodesInPath(npL, npR);
 				assert(Integrity::treeConsistency(npRoot.node));
-				validateUserData<I>(npRoot.node);
+				validateUserData<I>(npRoot.node, tmpRollbackList);
+
+				rollbackList.insertAfter(rollbackListCurNode, std::move(tmpRollbackList));
+				rollbackListCurNode = tmpRollbackListCurNode;
+				tmpRollbackListCurNode = nullptr;
 
 				reverse = select(npRoot.node->template getEventData<I>());
 				reverse ^= npRoot.node->children[0] != npL.node;
@@ -500,6 +511,16 @@ namespace TopTreeInternals {
 			}
 		}
 
+		if (tmpRollbackList.front()) {
+			rollbackList.insertAfter(rollbackListCurNode, std::move(tmpRollbackList));
+			rollbackListCurNode = tmpRollbackListCurNode;
+			tmpRollbackListCurNode = nullptr;
+		}
+
+		if (rollbackListCurNode) {
+			rollbackListCurNode->tmpMark = true;
+		}
+
 		npLL.onPath = false;
 		npRR.onPath = false;
 		npL = joinNodesInPath(npLL, npLR);
@@ -511,7 +532,7 @@ namespace TopTreeInternals {
 
 	template <class... TUserData>
 	bool TopTree<TUserData...>::rollback() {
-		if (rollbackList.front()) {
+		if (Node *prevRoot = rollbackList.front()) {
 			while (Node *node = rollbackList.pop()) {
 				for (int i : {0, 1}) {
 					assert(node->children[i]);
@@ -527,14 +548,15 @@ namespace TopTreeInternals {
 					}
 				}
 
-				// destroy temporary tree if previous root was found
+				// destroy temporary tree if the previous one is restored
 				if (node->tmpMark) {
 					node->tmpMark = false;
 					for (Node *node : exposedRoot->postorder()) {
 						node->detach();
 						deleteNode(node);
 					}
-					exposedRoot = node;
+					exposedRoot = prevRoot;
+					prevRoot = rollbackList.front();
 					assert(Integrity::treeConsistency(exposedRoot));
 				}
 			}
@@ -626,10 +648,10 @@ namespace TopTreeInternals {
 
 	template <class... TUserData>
 	template <size_t I>
-	inline void TopTree<TUserData...>::validateUserData(Node *root) {
+	inline void TopTree<TUserData...>::validateUserData(Node *root, InnerList<Node, &Node::rollbackListNode> &splitList) {
 		assert(root);
 		if (root->userDataValid[I]) return;
-		for (Node *node = rollbackList.front(); node; node = rollbackList.next(node)) {
+		for (Node *node = splitList.front(); node; node = splitList.next(node)) {
 			if (node->userDataValid[I]) {
 				node->template userDataSplit<I>();
 			}
@@ -711,6 +733,7 @@ namespace TopTreeInternals {
 	template <size_t I>
 	inline void TopTree<TUserData...>::Node::userDataSplit() {
 		assert(userDataValid[I]);
+		assert(!this->parent || !this->parent->userDataValid[I]);
 		std::tuple_element<I, decltype(userData)>::type::split(getEventData<I>());
 		userDataValid[I] = false;
 	}
@@ -742,6 +765,8 @@ namespace TopTreeInternals {
 		this->boundary[0] = child1->getOtherVertex(sharedVertex);
 		this->boundary[1] = type == COMPRESS ?
 			child2->getOtherVertex(sharedVertex) : sharedVertex;
+
+		for (bool &valid : this->userDataValid) valid = false;
 
 		assert(Integrity::nodeChildrenBoundary(this));
 	}

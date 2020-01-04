@@ -69,9 +69,15 @@ struct PathLengthUserData {
 	using EventData = TopTreeEventData<PathLengthUserData>;
 
 	int length;
+	int multiplicator = 1; // should multiply all descendants
 
 	PathLengthUserData(int length = 1) : length(length) {};
 	operator int() { return length; }
+
+	void multiplyAll(int coef) {
+		length *= coef;
+		multiplicator *= coef;
+	}
 
 	static void join(EventData eventData) {
 		if (eventData.type == TopTreeClusterType::COMPRESS) {
@@ -79,10 +85,14 @@ struct PathLengthUserData {
 		} else {
 			eventData.parent.length = eventData.children[0].length;
 		}
+		eventData.parent.multiplicator = 1;
 	}
 
-	static void split(EventData eventData) { }
-
+	static void split(EventData eventData) {
+		for (int i : {0, 1}) {
+			eventData.children[i].multiplyAll(eventData.parent.multiplicator);
+		}
+	}
 };
 
 struct TreeMinEdgeUserData {
@@ -94,7 +104,7 @@ struct TreeMinEdgeUserData {
 	TreeMinEdgeUserData(int weight = 0) : minWeight(weight) {};
 	operator int() { return minWeight; };
 
-	void increaseAllInTree(int delta) {
+	void increaseAll(int delta) {
 		this->delta += delta;
 		this->minWeight += delta;
 	}
@@ -132,9 +142,11 @@ class TestingTopTree : public TopTree<PathLengthUserData, PathLengthUserData, Tr
 			Node *root = createSubTree(depth1, rakeToAllRatio, this->newVertex());
 			this->markNodeAsRoot(root);
 			assert(Integrity::treeConsistency(root));
+			this->getRootData().multiplyAll(3);
 			root = createSubTree(depth2, rakeToAllRatio, this->newVertex());
 			this->markNodeAsRoot(root);
 			assert(Integrity::treeConsistency(root));
+			this->getRootData().multiplyAll(3);
 			paths.compute();
 			printf("Base nodes: %d\nRake nodes: %d\nCompress nodes: %d\n", baseCnt, rakeCnt, compressCnt);
 		}
@@ -162,7 +174,7 @@ class TestingTopTree : public TopTree<PathLengthUserData, PathLengthUserData, Tr
 				auto &[pathLen, edgesCnt, treeMinEdge] = node->userData;
 				pathLen = rndDist(rndGen) * 1000 + 1;
 				edges.newEdge(sharedVertex, otherVertex, pathLen);
-				paths.newEdge(sharedVertex, otherVertex, pathLen);
+				paths.newEdge(sharedVertex, otherVertex, pathLen * 3);
 
 				treeMinEdge = 0;
 				while (treeMinEdge == 0) {
@@ -210,7 +222,7 @@ int main() {
 	// on vertices 0-128 and 129-193
 	TestingTopTree forest(42, 7, 6);
 
-	std::cout << "Testing expose with bottom-up data aggregation (connectivity and lengths of all paths):" << std::endl;
+	std::cout << "Testing expose with bottom-up data aggregation and top-down propagation\n(connectivity and lengths of all paths):" << std::endl;
 	for (TopTreeVertex u = 0; u < forest.getVerticesCnt(); u++) {
 		if (u % 10 == 0) std::cout << "  ...from vertex " << u << std::endl;
 		for (TopTreeVertex v = u + 1; v < forest.getVerticesCnt(); v++) {
@@ -255,9 +267,9 @@ int main() {
 	TopTreeIntegrityLevel = 2;
 
 	forest.exposeTree(0);
-	forest.getRootData<2>().increaseAllInTree(10);
+	forest.getRootData<2>().increaseAll(10);
 	forest.exposeTree(129);
-	forest.getRootData<2>().increaseAllInTree(10);
+	forest.getRootData<2>().increaseAll(10);
 
 	for (auto minimum : forest.minima) {
 		forest.exposeTree(minimum.u);

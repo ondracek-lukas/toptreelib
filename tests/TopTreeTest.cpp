@@ -15,7 +15,7 @@
 std::default_random_engine rndGen(42);
 std::uniform_real_distribution<float> rndDist;
 
-class ShadowTree {
+class ShadowForest {
 	struct Edge;
 	struct Vertex {
 		size_t index;
@@ -143,9 +143,21 @@ struct PathLengthUserData {
 	using EventData = TopTreeEventData<PathLengthUserData>;
 
 	int length;
+	int multiplicator = 1; // should multiply all descendants
+	enum {
+		HERE_BASE = 0,
+		HERE,
+		UP,
+		DOWN
+	} dataLoc = HERE_BASE;  // for data flow correctness verification
 
 	PathLengthUserData(int length = 1) : length(length) {};
 	operator int() { return length; }
+
+	void multiplyAll(int coef) {
+		length *= coef;
+		multiplicator *= coef;
+	}
 
 	static void join(EventData eventData) {
 		if (eventData.type == TopTreeClusterType::COMPRESS) {
@@ -153,21 +165,108 @@ struct PathLengthUserData {
 		} else {
 			eventData.parent.length = eventData.children[0].length;
 		}
+		eventData.parent.multiplicator = 1;
+
+		assert(eventData.children[0].dataLoc <= HERE);
+		assert(eventData.children[1].dataLoc <= HERE);
+
+		eventData.children[0].dataLoc = UP;
+		eventData.children[1].dataLoc = UP;
+		eventData.parent.dataLoc = HERE;
 	}
 
-	static void split(EventData eventData) { }
+	static void split(EventData eventData) {
+		for (int i : {0, 1}) {
+			eventData.children[i].multiplyAll(eventData.parent.multiplicator);
+		}
 
+		assert(eventData.children[0].dataLoc == UP);
+		assert(eventData.children[1].dataLoc == UP);
+		assert(eventData.parent.dataLoc == HERE);
+
+		eventData.children[0].dataLoc = HERE;
+		eventData.children[1].dataLoc = HERE;
+		eventData.parent.dataLoc = DOWN;
+	}
 };
+
+struct StatsUserData {
+	using EventData = TopTreeEventData<StatsUserData>;
+
+	int maxDepth = 1;
+	int nodesCnt = 1;
+
+	struct AvgMax {
+		int sum = 0;
+		int cnt = 0;
+		int max = 0;
+	};
+	static std::vector<AvgMax> depthPerSize;
+	static int totalLogs, totalSplits, totalJoins;
+
+	static void join(EventData eventData) {
+		eventData.parent.maxDepth = std::max(eventData.children[0].maxDepth, eventData.children[1].maxDepth) + 1;
+		eventData.parent.nodesCnt = eventData.children[0].nodesCnt + eventData.children[1].nodesCnt;
+		totalJoins++;
+	}
+
+	static void split(EventData eventData) {
+		totalSplits++;
+	}
+
+	void log() {
+		if (nodesCnt >= depthPerSize.size()) {
+			depthPerSize.resize(nodesCnt + 1);
+		}
+		AvgMax &item = depthPerSize[nodesCnt];
+		if (item.max < maxDepth) {
+			item.max = maxDepth;
+		}
+		item.cnt++;
+		item.sum += maxDepth;
+		totalLogs++;
+	}
+
+	static void print() {
+		std::cout << std::endl << "Stats: [tree size: avg depth, max depth, number of records]" << std::endl;
+		int i = 0;
+		int toI = 1;
+		while (i < depthPerSize.size()) {
+			int fromI = i;
+			toI <<= 1;
+			if (toI > depthPerSize.size()) toI = depthPerSize.size();
+			int avgMin = std::numeric_limits<int>::max();
+			int avgMax = 0;
+			int max = 0;
+			int cnt = 0;
+			for (; i < toI; i++) {
+				AvgMax &item = depthPerSize[i];
+				cnt += item.cnt;
+				int avg = item.cnt ? (item.sum / item.cnt) : 0;
+				if (avgMin > avg) avgMin = avg;
+				if (avgMax < avg) avgMax = avg;
+				if (max < item.max) max = item.max;
+			}
+			std::cout << fromI << "-" << (toI-1) << ": avg " << avgMin << "-" << avgMax << ", max " << max << ", cnt " << cnt << std::endl;
+		}
+		std::cout << "avg splits/op: " << (totalSplits / (float) totalLogs) << std::endl;
+		std::cout << "avg joins/op:  " << (totalJoins  / (float) totalLogs) << std::endl;
+	}
+};
+std::vector<StatsUserData::AvgMax> StatsUserData::depthPerSize = std::vector<AvgMax>();
+int StatsUserData::totalLogs = 0;
+int StatsUserData::totalSplits = 0;
+int StatsUserData::totalJoins  = 0;
 
 
 int main() {
 	using Vertex = TopTreeVertex;
-	ShadowTree shadowTree;
-	BiasedTreeTopTree<PathLengthUserData> forestBTTT;
-	TopTree<PathLengthUserData> &forest = forestBTTT;
-	
+	ShadowForest shadowForest;
+	BiasedTreeTopTree<PathLengthUserData, StatsUserData> forestBTTT;
+	TopTree<PathLengthUserData, StatsUserData> &forest = forestBTTT;
+
 	Vertex u = forest.newVertex();
-	assert(shadowTree.newVertex() == u);
+	assert(shadowForest.newVertex() == u);
 	int step = 0;
 
 	// create one component of given number of edges
@@ -176,47 +275,54 @@ int main() {
 			u = rndDist(rndGen) * (i + 1);
 		}
 		Vertex v = forest.newVertex();
-		assert(shadowTree.newVertex() == v);
+		assert(shadowForest.newVertex() == v);
 		std::cout << ++step << ": link(" << u  << ", " << v << ")" << std::endl;
 		int edgeLength = rndDist(rndGen) * 1000;
-		forest.link(u, v, edgeLength);
-		assert(shadowTree.link(u, v, edgeLength));
+		forest.link(u, v, edgeLength, StatsUserData());
+		assert(shadowForest.link(u, v, edgeLength * 2));
+		forest.getRootData<1>().log();
 		u = v;
 	}
 
+	forest.getRootData().multiplyAll(2);
+
 	for (int i = 0; i < 100; i++) {
-		while (shadowTree.verticesCnt() - shadowTree.edgesCnt() < 31) {
+		while (shadowForest.verticesCnt() - shadowForest.edgesCnt() < 31) {
 			// cut random edge
-			size_t edgeIndex = rndDist(rndGen) * shadowTree.edgesCnt();
-			auto [u, v, length] = shadowTree.getEdge(edgeIndex);
+			size_t edgeIndex = rndDist(rndGen) * shadowForest.edgesCnt();
+			auto [u, v, length] = shadowForest.getEdge(edgeIndex);
 			std::cout << ++step << ": cut(" << u  << ", " << v << ")" << std::endl;
-			auto [data] = forest.cut(u, v);
+			auto [data, stats] = forest.cut(u, v);
 			assert(data.length == length);
-			assert(shadowTree.cut(u, v));
+			assert(shadowForest.cut(u, v));
+			forest.getRootData<1>().log();
 		}
 
 		for (int j = 0; j < 10; j++) {
 			// choose random pair of vertices; either link or expose them
 			Vertex u, v;
-			u = rndDist(rndGen) * shadowTree.verticesCnt();
+			u = rndDist(rndGen) * shadowForest.verticesCnt();
 			do {
-				v = rndDist(rndGen) * shadowTree.verticesCnt();
+				v = rndDist(rndGen) * shadowForest.verticesCnt();
 			} while (u == v);
-			int length = shadowTree.pathLength(u, v);
+			int length = shadowForest.pathLength(u, v);
 			if (length < 0) {
 				std::cout << ++step << ": link(" << u  << ", " << v << ")" << std::endl;
 				int edgeLength = rndDist(rndGen) * 1000;
-				forest.link(u, v, edgeLength);
-				assert(shadowTree.link(u, v, edgeLength));
+				forest.link(u, v, edgeLength, StatsUserData());
+				forest.getRootData<1>().log();
+				assert(shadowForest.link(u, v, edgeLength));
 			} else {
 				std::cout << ++step << ": expose(" << u << ", " << v << ")" << std::endl;
 				forest.expose(u, v);
 				auto data = forest.getRootData();
 				assert(data.length == length);
+				forest.getRootData<1>().log();
 			}
 		}
 	}
 
+	StatsUserData::print();
 
 	return 0;
 }
