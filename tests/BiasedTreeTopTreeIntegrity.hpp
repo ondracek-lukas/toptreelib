@@ -46,6 +46,10 @@ namespace TopTreeInternals {
 					int minWeightDiff[2];
 					int bottomWeight[2];
 					bool reversed;
+
+					bool btRootLeaf;
+					int btBoundingLeavesRanks[2];
+					int btMinReqNeighbouringLeavesRanks[2];
 				};
 				std::vector<Accum> accum;
 
@@ -78,6 +82,8 @@ namespace TopTreeInternals {
 						}
 						if (accum.size() <= index) accum.resize(index + 1);
 					}
+
+					accum[node->index].btRootLeaf = !top_leaf && (rake_leaf || compress_leaf_non_root);
 
 					// weight
 					if (top_leaf) {
@@ -146,6 +152,53 @@ namespace TopTreeInternals {
 						TEST(node->clusterType == RAKE);
 						if (!top_root) {
 							TEST(node->boundary[1] == parent->boundary[1]);
+						}
+					}
+				}
+
+				// biased tree invariants,  TODO: verify
+				for (Node *baseClassNode : root->postorder()) {
+					ENode *node        = ext(baseClassNode);
+					Accum *nAccum      = &accum[node->index];
+					ENode *parent      = !accum[node->index].btRootLeaf ? ext(node->parent) : nullptr;
+					ENode *grandparent = parent && !accum[parent->index].btRootLeaf ? ext(parent->parent) : nullptr;
+					bool  btLeaf       = (node->clusterType == BASE) || (accum[node->index].btRootLeaf);
+					bool  rev          = nAccum->reversed;
+
+					if (node->clusterType != BASE) {
+						bool  childRev[2]  = {accum[node->children[0]->index].reversed, accum[node->children[1]->index].reversed};
+						// 4th int. -- global bias property
+						TEST2(
+							accum[node->children[I^rev]->index].btBoundingLeavesRanks[!I ^ childRev[I^rev]] >=
+								accum[node->children[!I^rev]->index].btMinReqNeighbouringLeavesRanks[I ^ childRev[!I^rev]]);
+
+						if (!btLeaf) {
+							for (int i : {0, 1}) {
+								nAccum->btBoundingLeavesRanks[i^rev] = accum[node->children[i^rev]->index].btBoundingLeavesRanks[i ^ childRev[i^rev]];
+								nAccum->btMinReqNeighbouringLeavesRanks[i^rev] = accum[node->children[i^rev]->index].btMinReqNeighbouringLeavesRanks[i ^ childRev[i^rev]];
+							}
+						}
+					}
+
+					if (btLeaf) {
+						for (int i : {0, 1}) {
+							nAccum->btBoundingLeavesRanks[i] = node->rank;
+							nAccum->btMinReqNeighbouringLeavesRanks[i] = 0;
+						}
+
+						// 1st inv.
+						TEST((1 << node->rank <= node->weight) && (2 << node->rank > node->weight));
+					}
+
+					// 2nd inv.
+					TEST(!parent || ((accum[parent->index].btRootLeaf ? parent->rankDeferred : parent->rank) >= node->rank + btLeaf));
+
+					// 3rd inv.
+					TEST(!grandparent || ((accum[grandparent->index].btRootLeaf ? grandparent->rankDeferred : grandparent->rank) >= node->rank + 1));
+
+					if (parent && ((accum[parent->index].btRootLeaf ? parent->rankDeferred : parent->rank) >= node->rank + 2)) { // minor node
+						for (int i : {0, 1}) {
+							nAccum->btMinReqNeighbouringLeavesRanks[i] = node->rank - 1;
 						}
 					}
 				}

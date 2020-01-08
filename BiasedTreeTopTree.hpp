@@ -3,10 +3,6 @@
 #ifndef BIASED_TREE_TOP_TREE_HPP
 #define BIASED_TREE_TOP_TREE_HPP
 
-/* TODO:
- *   biased-tree-balancing join/split;
- */
-
 #include "TopTree.hpp"
 #include <iostream> // XXX tmp
 #include <algorithm>
@@ -155,8 +151,18 @@ namespace TopTreeInternals {
 				int minWeightDiff[2]; // compress tree only
 				int minWeightDiffDeferred[2];
 
-				bool isChildReversed(int i) { // compress tree only
-					return this->boundary[i] != this->children[i]->boundary[i];
+				template <ClusterType TTreeType = COMPRESS>
+				bool isChildReversed(int i) {
+					return (TTreeType == COMPRESS) && (this->boundary[i] != this->children[i]->boundary[i]);
+				}
+
+				template <ClusterType TTreeType = COMPRESS>
+				bool isReversedToGivenSibling(int childIndex, ENode *sibling, bool rakeTreeValue = false) {
+					if constexpr(TTreeType == COMPRESS) {
+						return (this->boundary[childIndex] == sibling->boundary[0]) || (this->boundary[childIndex] == sibling->boundary[1]);
+					} else {
+						return rakeTreeValue;
+					}
 				}
 
 				bool isRakeTreeNode() {
@@ -208,6 +214,9 @@ namespace TopTreeInternals {
 			template <ClusterType TTreeType>
 			ENode *join(ENode *leftTree, ENode *middleNode, ENode *rightTree);
 
+			template <ClusterType TTreeType, bool TGlobal>
+			ENode *btJoin(ENode *leftTree, ENode *rightTree, bool rev = false);
+
 			template <ClusterType TTreeType>
 			std::tuple<ENode *, ENode *, ENode *> split(ENode *tree, ENode *middleNode);
 
@@ -256,19 +265,34 @@ namespace TopTreeInternals {
 			// functions for tree manipulation incl. vertexToNode update;
 			// to be modified while implementing biased trees split/join
 			template <ClusterType TTreeType>
-			ENode *joinNodes(ClusterType clusterType, ENode *left, ENode *right) {
+			ENode *joinNodes(ENode *left, ENode *right, int rank, bool rev = false) {
+				if (rev) std::swap(left, right); // XXX can be moved inside attach
 				ENode *node = newNode();
+				ClusterType clusterType;
+				if constexpr(TTreeType == RAKE) {
+					clusterType = RAKE;
+				} else {
+					if (left->isRakeTreeNode()) {
+						clusterType = RAKE;
+						std::swap(left, right);
+					} else if (right->isRakeTreeNode()) {
+						clusterType = RAKE;
+					} else {
+						clusterType = COMPRESS;
+					}
+				}
 				node->template attachChildren<TTreeType>(clusterType, left, right);
+				node->rank = rank;
 				this->vertexToNodeUpdateInner(node);
 				return node;
 			}
 			template <ClusterType TTreeType>
-			std::tuple<ENode *, ENode *> splitNode(ENode *node) {
+			std::tuple<ENode *, ENode *> splitNode(ENode *node, bool rev = false) {
 				assert(!node->parent);
 				this->releaseJustNode(node);
 				this->markVertexAsIsolated(node->getInnerVertex());
-				ENode *leftChild = ext(node->children[0]);
-				ENode *rightChild = ext(node->children[1]);
+				ENode *leftChild = ext(node->children[rev]);
+				ENode *rightChild = ext(node->children[!rev]);
 				leftChild->template detach<TTreeType>();
 				rightChild->template detach<TTreeType>();
 				deleteNode(node);
@@ -381,7 +405,7 @@ namespace TopTreeInternals {
 
 		return userData;
 	}
-	
+
 
 	// --- splice, reroot, symmetrize ---
 
@@ -581,6 +605,15 @@ namespace TopTreeInternals {
 	inline void BiasedTreeTopTree<TUserData...>::ENode::
 	setLeafData() {
 		// initialize rake/compress tree leaf data or restore the original
+		if ((TTreeType != COMPRESS) || (rakeMaxWeight != weight)) {
+			if constexpr(becomingLeaf) {
+				rankDeferred = rank;
+				rank = 0;
+				while (2 << rank <= weight) ++rank;
+			} else {
+				rank = rankDeferred;
+			}
+		}
 		if constexpr(TTreeType == RAKE) {
 			if constexpr(becomingLeaf) {
 				minWeightDiffDeferred[0] = minWeightDiff[0];
@@ -612,31 +645,13 @@ namespace TopTreeInternals {
 	template <ClusterType TTreeType>
 	inline typename BiasedTreeTopTree<TUserData...>::ENode *BiasedTreeTopTree<TUserData...>::
 	join(ENode *leftTree, ENode *middleNode, ENode *rightTree) {
-		/*
-		std::cout << "Join: " << std::endl;
-		std::cout << "  ";
-		debugPrintTree<TTreeType>(leftTree);
-		std::cout << "  ";
-		debugPrintTree<(TTreeType == RAKE) ? COMPRESS : RAKE>(middleNode);
-		std::cout << "  ";
-		debugPrintTree<TTreeType>(rightTree);
-		*/
-		// TODO reimplement as biased trees (currently unbalanced)
-		// std::cout << (TTreeType == RAKE ? "rake_join" : "compress_join") << std::endl;
 
 		if (middleNode) {
 			middleNode->template setLeafData<TTreeType, true>();
-			ClusterType nodeType = (TTreeType == RAKE) || middleNode->isRakeTreeNode() ? RAKE : COMPRESS;
 			if (leftTree) {
-				leftTree = joinNodes<TTreeType>(nodeType, leftTree, middleNode);
-			} else if (rightTree) {
-				if constexpr(TTreeType == RAKE) {
-					rightTree = joinNodes<TTreeType>(nodeType, middleNode, rightTree); // preserve order
-				} else {
-					rightTree = joinNodes<TTreeType>(nodeType, rightTree, middleNode);
-				}
+				leftTree = btJoin<TTreeType, true>(leftTree, middleNode);
 			} else {
-				return middleNode;
+				leftTree = middleNode;
 			}
 		}
 
@@ -646,33 +661,123 @@ namespace TopTreeInternals {
 		} else if (rightTree == nullptr) {
 			root = leftTree;
 		} else {
-			if ((TTreeType == COMPRESS) && leftTree->isRakeTreeNode()) {
-				root = joinNodes<TTreeType>(RAKE, rightTree, leftTree);
-			} else if ((TTreeType == COMPRESS) && rightTree->isRakeTreeNode()) {
-				root = joinNodes<TTreeType>(RAKE, leftTree, rightTree);
-			} else {
-				root = joinNodes<TTreeType>(TTreeType, leftTree, rightTree);
+			root = btJoin<TTreeType, true>(leftTree, rightTree);
+		}
+
+		assert(EIntegrity::treeConsistency(root));
+		return root;
+	}
+
+	template <class... TUserData>
+	template <ClusterType TTreeType, bool TGlobal>
+	inline typename BiasedTreeTopTree<TUserData...>::ENode *BiasedTreeTopTree<TUserData...>::
+	btJoin(ENode *x, ENode *y, bool rev) {
+		if (x->rank < y->rank) {
+			// merging case 3 into 2, simplifying 1
+			std::swap(x,y);
+			rev = !rev;
+		}
+		bool xRev = x->template isReversedToGivenSibling<TTreeType>(0, y, rev);
+		bool yRev = y->template isReversedToGivenSibling<TTreeType>(1, x, rev);
+
+		if ((x->rank > y->rank) && !x->template isLeaf<TTreeType>()) { // case 2 (or 3)
+			int xRank = x->rank;
+			bool xRRev = xRev ^ x->template isChildReversed<TTreeType>(!xRev);
+			auto [xL, xR] = splitNode<TTreeType>(x, xRev);
+			x = nullptr;
+
+			// tilt x left
+			if (xR->rank == xRank) {
+				if (xL->rank == xRank) {
+					xRank++; // promote x
+				} else {
+					auto [xRL, xRR]  = splitNode<TTreeType>(xR, xRRev);
+					xL = joinNodes<TTreeType>(xL, xRL, xRank, xRev);
+					xR = xRR;
+				}
+			}
+
+			xR = btJoin<TTreeType, TGlobal>(xR, y, rev);
+			y = nullptr;
+			return joinNodes<TTreeType>(xL, xR, xRank, xRev);
+		}
+
+		if (TGlobal && (x->rank == y->rank) &&
+		    (!x->template isLeaf<TTreeType>()) && (!y->template isLeaf<TTreeType>())) { // case 4 of global join
+			int xyRank = x->rank;
+			if ((ext(x->children[!xRev])->rank < xyRank) &&
+			    ((ext(y->children[0])->rank == xyRank) || ext(y->children[1])->rank == xyRank)) {
+				// merging subcases 4b(ii) into 4b(i) and 4b(iv) into 4b(iii)
+				std::swap(x, y);
+				rev = !rev;
+				std::swap(xRev, yRev);
+				xRev = !xRev; yRev = !yRev;
+			}
+			bool xRRev = xRev ^ x->template isChildReversed<TTreeType>(!xRev);
+			bool yLRev = yRev ^ y->template isChildReversed<TTreeType>(yRev);
+			auto [xL, xR] = splitNode<TTreeType>(x, xRev);
+			x = nullptr;
+			auto [yL, yR] = splitNode<TTreeType>(y, yRev);
+			y = nullptr;
+			ENode *xRL = nullptr, *xRR = nullptr, *yLL = nullptr, *yLR = nullptr;
+			ENode *uR = xR, *uL = xL, *vL = yL;
+			if (xR->rank == xyRank) {
+				std::tie(xRL, xRR) = splitNode<TTreeType>(xR, xRRev);
+				xR = nullptr;
+				uR = xRR; uL = xRL;
+			}
+			if (yL->rank == xyRank) {
+				std::tie(yLL, yLR) = splitNode<TTreeType>(yL, yLRev);
+				yL = nullptr;
+				vL = yLL;
+			}
+			ENode *z = btJoin<TTreeType, TGlobal>(uR, vL, rev);
+			uR = vL = nullptr;
+
+			if (z->rank == xyRank) { // subcase 4a
+				bool zRev = z->template isReversedToGivenSibling<TTreeType>(1, uL);
+				auto [zL, zR] = splitNode<TTreeType>(z, zRev);
+				z = nullptr;
+				if (xRL) {
+					xR = joinNodes<TTreeType>(xRL, zL, xyRank, rev);
+				} else {
+					xR = zL;
+				}
+				x = joinNodes<TTreeType>(xL, xR, xyRank, rev);
+				if (yLR) {
+					yL = joinNodes<TTreeType>(zR, yLR, xyRank, rev);
+				} else {
+					yL = zR;
+				}
+				y = joinNodes<TTreeType>(yL, yR, xyRank, rev);
+				return joinNodes<TTreeType>(x, y, xyRank + 1, rev);
+			} else { // subcase 4b
+				if (yLR) {
+					yL = joinNodes<TTreeType>(z, yLR, xyRank, rev);
+				} else {
+					yL = z;
+				}
+				y = joinNodes<TTreeType>(yL, yR, xyRank, rev);
+
+				if (xRL) { // subcase 4b(i) (or 4b(ii))
+					x = joinNodes<TTreeType>(xL, xRL, xyRank, rev);
+					return joinNodes<TTreeType>(x, y, xyRank + 1, rev);
+				}
+
+				// subcases 4b(iii) (or 4b(iv)) or 4b(v)
+				return joinNodes<TTreeType>(xL, y, xyRank + (xL->rank == xyRank), rev);
 			}
 		}
 
-		// debugPrintRawTree(root);
-		assert(EIntegrity::treeConsistency(root));
-		return root;
+		// case 1
+		return joinNodes<TTreeType>(x, y, x->rank + 1, rev);
 	}
 
 	template <class... TUserData>
 	template <ClusterType TTreeType>
 	std::tuple<typename BiasedTreeTopTree<TUserData...>::ENode *, typename BiasedTreeTopTree<TUserData...>::ENode *, typename BiasedTreeTopTree<TUserData...>::ENode *> BiasedTreeTopTree<TUserData...>::
 	split(ENode *tree, ENode *middleNode) {
-		// TODO reimplement as biased trees (currently unbalanced)
-
-		/*
-		std::cout << (TTreeType == COMPRESS ? "Split<COMPRESS>: " : "Split<RAKE>") << std::endl;
-		std::cout << "  ";
-		debugPrintTree(tree);
-		std::cout << "  ";
-		debugPrintTree(middleNode);
-		*/
+		// TODO check complexity and whether it is compatible with biased tree balancing
 
 		if (!middleNode) {
 			return {tree, nullptr, nullptr};
@@ -704,7 +809,6 @@ namespace TopTreeInternals {
 			}
 		}
 
-		//InnerList<Node, &Node::tmpListNode> splitNodes;
 		while (middleNode->parent) {
 			middleNode->tmpMark = true;
 			middleNode = ext(middleNode->parent);
@@ -721,19 +825,10 @@ namespace TopTreeInternals {
 			ENode *children[2] = {leftChild, rightChild};
 			children[nextI]->tmpMark = false;
 
-			/*
-			std::cout << "Left tree: ";
-			debugPrintTree<TTreeType>(left);
-			std::cout << "Right tree: ";
-			debugPrintTree<TTreeType>(right);
-			std::cout << "Child: ";
-			debugPrintTree<TTreeType>(children[!nextI]);
-			*/
-
 			if (nextI ^ rev) {
-				left = join<TTreeType>(left, nullptr, children[!nextI]);
+				left = left ? btJoin<TTreeType, false>(left, children[!nextI]) : children[!nextI];
 			} else {
-				right = join<TTreeType>(children[!nextI], nullptr, right);
+				right = right ? btJoin<TTreeType, false>(children[!nextI], right) : children[!nextI];
 			}
 			rev = childRev;
 			middleNode = children[nextI];
@@ -741,8 +836,8 @@ namespace TopTreeInternals {
 		if (!middleNode->template isLeaf<TTreeType>()) {
 			auto [leftChild, rightChild] = splitNode<TTreeType>(middleNode);
 			ENode *children[2] = {leftChild, rightChild};
-			left  = join<TTreeType>(left, nullptr,  children[rev]);
-			right = join<TTreeType>(children[!rev], nullptr, right);
+			left  = left ? btJoin<TTreeType, false>(left, children[rev]) : children[rev];
+			right = right ? btJoin<TTreeType, false>(children[!rev], right) : children[!rev];
 			middleNode = nullptr;
 		} else {
 			middleNode->template setLeafData<TTreeType, false>();
@@ -750,15 +845,6 @@ namespace TopTreeInternals {
 
 		assert(EIntegrity::treeConsistency(left));
 		assert(EIntegrity::treeConsistency(right));
-
-		/*
-		std::cout << "  =>";
-		debugPrintTree(left);
-		std::cout << "  =>";
-		debugPrintTree(middleNode);
-		std::cout << "  =>";
-		debugPrintTree(right);
-		*/
 
 		return {left, middleNode, right};
 	}
