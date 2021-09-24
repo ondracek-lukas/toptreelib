@@ -11,6 +11,7 @@
 #ifdef TOP_TREE_INTEGRITY
 
 #define assert_STR(expr) #expr
+	// XXX rename, e.g. to ttassert
 #define assert(cond) { \
 		if (!(cond)) { \
 			printf("Assertion [" assert_STR(cond) "] failed at " __FILE__ ":%d\n\n", __LINE__); \
@@ -21,6 +22,7 @@
 #ifndef TOP_TREE_INTEGRITY_HPP
 #define TOP_TREE_INTEGRITY_HPP
 
+#include <cstdlib>
 #include <cstdio>
 #include <vector>
 size_t TopTreeIntegrityLevel = 2;
@@ -29,6 +31,7 @@ size_t TopTreeIntegrityLevel = 2;
 namespace TopTreeInternals {
 	template <class... TUserData>
 	class TopTree;
+	bool IntegrityFailed = false; // XXX use as in ContractionTopTreeIntegrity
 
 #define FAIL_HERE { printf("\n\nIntegrity test failed at " __FILE__ ":%d\n", __LINE__); return false; }
 #define TEST(cond) {if (!(cond)) FAIL_HERE; }

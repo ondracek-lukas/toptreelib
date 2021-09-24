@@ -31,7 +31,6 @@ namespace TopTreeInternals {
 		using BTTT = BiasedTreeTopTree<TUserData...>;
 		using Node = typename TopTree<TUserData...>::Node;
 		using ENode = typename BiasedTreeTopTree<TUserData...>::ENode;
-		static const auto ext = BTTT::ext;
 
 		public:
 
@@ -54,10 +53,10 @@ namespace TopTreeInternals {
 				std::vector<Accum> accum;
 
 				for (Node *baseClassNode : root->preorder()) {
-					ENode *node        = ext(baseClassNode);
-					ENode *parent      = ext(node->parent);
-					ENode *sibling     = parent ? ext(parent->children[ parent->children[0] == node ]) : nullptr;
-					ENode *children[2] = {ext(node->children[0]), ext(node->children[1])};
+					ENode *node        = BTTT::ext(baseClassNode);
+					ENode *parent      = BTTT::ext(node->parent);
+					ENode *sibling     = parent ? BTTT::ext(parent->children[ parent->children[0] == node ]) : nullptr;
+					ENode *children[2] = {BTTT::ext(node->children[0]), BTTT::ext(node->children[1])};
 
 					bool top_root               = !parent;
 					bool top_leaf               = node->clusterType == BASE;
@@ -158,10 +157,10 @@ namespace TopTreeInternals {
 
 				// biased tree invariants,  TODO: verify
 				for (Node *baseClassNode : root->postorder()) {
-					ENode *node        = ext(baseClassNode);
+					ENode *node        = BTTT::ext(baseClassNode);
 					Accum *nAccum      = &accum[node->index];
-					ENode *parent      = !accum[node->index].btRootLeaf ? ext(node->parent) : nullptr;
-					ENode *grandparent = parent && !accum[parent->index].btRootLeaf ? ext(parent->parent) : nullptr;
+					ENode *parent      = !accum[node->index].btRootLeaf ? BTTT::ext(node->parent) : nullptr;
+					ENode *grandparent = parent && !accum[parent->index].btRootLeaf ? BTTT::ext(parent->parent) : nullptr;
 					bool  btLeaf       = (node->clusterType == BASE) || (accum[node->index].btRootLeaf);
 					bool  rev          = nAccum->reversed;
 

@@ -65,7 +65,7 @@ namespace TopTreeInternals {
 		public:
 			virtual bool expose(Vertex u, Vertex v);
 			virtual bool exposeTree(Vertex v); // set tree with v as main
-			virtual void link(Vertex u, Vertex v, TUserData... userData) = 0;
+			virtual void link(Vertex u, Vertex v, TUserData... userData) = 0; // use move semantics for userData? XXX
 			virtual std::tuple<TUserData...> cut(Vertex u, Vertex v) = 0;
 
 			template <int I = 0, bool onExposedPath = false, class TSelect>
@@ -88,6 +88,7 @@ namespace TopTreeInternals {
 			// in favour of expose.
 			bool sameComponent(Vertex u, Vertex v);
 
+			// Returns reference to I-th TUserData of root node.
 			// Returned root data may be accessed and modified
 			// until next call to any method.
 			template <int I = 0>
@@ -113,12 +114,13 @@ namespace TopTreeInternals {
 			};
 
 			struct Node : SubtreeTraversability<Node> {  // node in top tree
-				size_t index; // < nodesAllocated, to be used in vectors with extension data
+				size_t index; // < nodesAllocated, to be used in vectors with extension data; maybe not needed? XXX
 				Vertex boundary[2];
 				Node *children[2] = {nullptr, nullptr};
 				Node *parent = nullptr;
 				// constraints:
 					// boundary[i] should be in children[i]->boundary;
+					// children[0] is on path even in RAKE node
 				ClusterType clusterType;
 				std::tuple<TUserData...> userData;
 				bool userDataValid[sizeof...(TUserData)] = {};
@@ -153,7 +155,7 @@ namespace TopTreeInternals {
 				void userDataJoin();
 
 				// For base cluster use setBoundary;
-				// for non-base cluster use either attachChildren, or twice attachChild and setBoundary.
+				// for non-base cluster use either attachChildren, or twice attachChild followed by setBoundary.
 
 				Node *attachChildren(ClusterType type, Node *child1, Node *child2);
 				Node *attachChild(int childIndex, Node* child);
@@ -171,6 +173,27 @@ namespace TopTreeInternals {
 				return node;
 			}
 
+			Node *baseNode(Vertex u, Vertex v) {
+				Node *node = this->vertexToNode[v];
+				if (!node) return nullptr;
+				if ((node->boundary[0] != u) && (node->boundary[1] != u)) {
+					std::swap(u, v);
+					node = this->vertexToNode[v];
+					if (!(node && ((node->boundary[0] == u) || (node->boundary[1] == u)))) return nullptr;; // interface assert
+				}
+				if (node->clusterType != BASE) {
+					node = node->children[node->boundary[1] == u];
+					while (node->clusterType != BASE) {
+						if (node->clusterType != RAKE) return nullptr;
+						node = node->children[0];
+					}
+				}
+				assert(
+						((node->boundary[0] == u) && (node->boundary[1] == v)) ||
+						((node->boundary[1] == u) && (node->boundary[0] == v)));
+				return node;
+			}
+
 			// Nodes of the original tree with child used in the temporary tree;
 			// the child's parent pointer points into the temporary tree;
 			// original roots should have tmpMark set.
@@ -183,7 +206,8 @@ namespace TopTreeInternals {
 
 			Node *exposedRoot; // root of the exposed tree
 
-			std::vector<Node*> vertexToNode; // topmost nodes having given vertex as inner vertex, or root
+			std::vector<Node*> vertexToNode; // the node having given vertex as inner vertex; root node otherwise
+				// XXX or use struct Vertex instead?
 
 
 			// To correctly handle user data when tree is being changed,
@@ -193,7 +217,7 @@ namespace TopTreeInternals {
 			// marking them invalid.
 			void releaseNode(Node *node);
 
-			// Calls split only on given node assuming invalid data of ancestors.
+			// Calls split only on given node assuming invalid data in ancestors.
 			void releaseJustNode(Node *node);
 
 			// As releaseNode but only for user data of indices given by template arguments.
@@ -255,13 +279,21 @@ namespace TopTreeInternals {
 				exposedRoot = node;
 			}
 
-			void markNodeAsNonRoot(Node *node) {
+			void markNodeAsNonRoot(Node *node) { // or mark isolated vertices instead
 				vertexToNode[node->boundary[0]] = nullptr;
 				vertexToNode[node->boundary[1]] = nullptr;
 			}
 
 		private:
 			NodeInPath joinNodesInPath(NodeInPath np1, NodeInPath np2);
+
+#ifdef TOP_TREE_INTEGRITY
+		public:
+			virtual void testIntegrity() { // XXX just root tree test
+				assert(Integrity::treeConsistency(exposedRoot));
+			}
+#endif
+
 	};
 
 
@@ -698,6 +730,7 @@ namespace TopTreeInternals {
 		Node *p = this->parent;
 		if (p) {
 			assert(p->children[ p->children[0] != this ] == this);
+			assert(!p->userDataValid[0]); // XXX
 			p->children[ p->children[0] != this ] = nullptr;
 			this->parent = nullptr;
 		}

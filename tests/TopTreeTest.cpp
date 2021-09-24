@@ -1,7 +1,10 @@
 // TopTreeLibrary  Copyright (C) 2019  Lukáš Ondráček <ondracek@ktiml.mff.cuni.cz>, use under GNU GPLv3
 
+#define STR(S) #S
+#define TOP_TREE_HEADER(TYPE) STR(../TYPE.hpp)
+
 #define TOP_TREE_INTEGRITY
-#include "../BiasedTreeTopTree.hpp"
+#include TOP_TREE_HEADER(TOP_TREE_TYPE)
 
 #include <cassert>
 #include <random>
@@ -259,24 +262,59 @@ int StatsUserData::totalSplits = 0;
 int StatsUserData::totalJoins  = 0;
 
 
+int test(int vertices, int maxComponents, int outerIters, int innerIters, int logPeriod = 1);
+
 int main() {
+	/*
+	TopTreeIntegrityLevel = 2;
+	test(1101, 31, 100, 10);
+	*/
+
+
+	/*
+	TopTreeIntegrityLevel = 2;
+	test(20, 5, 100, 100, 1);
+	*/
+
+	TopTreeIntegrityLevel = 1;
+	test(10000, 40, 50, 50, 128);
+
+	/*
+	TopTreeIntegrityLevel = 1;
+	test(10000, 40, 100, 100, 128);
+	*/
+
+	/*
+	TopTreeIntegrityLevel = 1;
+	test(2000000, 40, 1, 1, 128);
+	*/
+
+	/*
+	TopTreeIntegrityLevel = 1;
+	test(1000000, 40, 100, 100, 128);
+	*/
+}
+
+int test(int vertices, int maxComponents, int outerIters, int innerIters, int logPeriod) {
 	using Vertex = TopTreeVertex;
 	ShadowForest shadowForest;
-	BiasedTreeTopTree<PathLengthUserData, StatsUserData> forestBTTT;
-	TopTree<PathLengthUserData, StatsUserData> &forest = forestBTTT;
+	TOP_TREE_TYPE<PathLengthUserData, StatsUserData> forestImpl;
+	TopTree<PathLengthUserData, StatsUserData> &forest = forestImpl;
 
 	Vertex u = forest.newVertex();
 	assert(shadowForest.newVertex() == u);
 	int step = 0;
 
 	// create one component of given number of edges
-	for (int i = 0; i < 1100; i++) {
+	for (int i = 1; i < vertices; i++) {
 		if (rndDist(rndGen) < 0.2) {
-			u = rndDist(rndGen) * (i + 1);
+			u = rndDist(rndGen) * i;
 		}
 		Vertex v = forest.newVertex();
 		assert(shadowForest.newVertex() == v);
-		std::cout << ++step << ": link(" << u  << ", " << v << ")" << std::endl;
+		if (++step % logPeriod == 0) {
+			std::cout << step << ": link(" << u  << ", " << v << ")" << std::endl;
+		}
 		int edgeLength = rndDist(rndGen) * 1000;
 		forest.link(u, v, edgeLength, StatsUserData());
 		assert(shadowForest.link(u, v, edgeLength * 2));
@@ -286,19 +324,21 @@ int main() {
 
 	forest.getRootData().multiplyAll(2);
 
-	for (int i = 0; i < 100; i++) {
-		while (shadowForest.verticesCnt() - shadowForest.edgesCnt() < 31) {
+	for (int i = 0; i < outerIters; i++) {
+		while (shadowForest.verticesCnt() - shadowForest.edgesCnt() < maxComponents - 1) {
 			// cut random edge
 			size_t edgeIndex = rndDist(rndGen) * shadowForest.edgesCnt();
 			auto [u, v, length] = shadowForest.getEdge(edgeIndex);
-			std::cout << ++step << ": cut(" << u  << ", " << v << ")" << std::endl;
+			if (++step % logPeriod == 0) {
+				std::cout << step << ": cut(" << u  << ", " << v << ")" << std::endl;
+			}
 			auto [data, stats] = forest.cut(u, v);
 			assert(data.length == length);
 			assert(shadowForest.cut(u, v));
 			forest.getRootData<1>().log();
 		}
 
-		for (int j = 0; j < 10; j++) {
+		for (int j = 0; j < innerIters; j++) {
 			// choose random pair of vertices; either link or expose them
 			Vertex u, v;
 			u = rndDist(rndGen) * shadowForest.verticesCnt();
@@ -307,14 +347,19 @@ int main() {
 			} while (u == v);
 			int length = shadowForest.pathLength(u, v);
 			if (length < 0) {
-				std::cout << ++step << ": link(" << u  << ", " << v << ")" << std::endl;
+				if (++step % logPeriod == 0) {
+					std::cout << step << ": link(" << u  << ", " << v << ")" << std::endl;
+				}
 				int edgeLength = rndDist(rndGen) * 1000;
 				forest.link(u, v, edgeLength, StatsUserData());
 				forest.getRootData<1>().log();
 				assert(shadowForest.link(u, v, edgeLength));
 			} else {
-				std::cout << ++step << ": expose(" << u << ", " << v << ")" << std::endl;
-				forest.expose(u, v);
+				if (++step % logPeriod == 0) {
+					std::cout << step << ": expose(" << u << ", " << v << ")" << std::endl;
+				}
+				bool succ = forest.expose(u, v);
+				assert(succ);
 				auto data = forest.getRootData();
 				assert(data.length == length);
 				forest.getRootData<1>().log();
@@ -323,6 +368,8 @@ int main() {
 	}
 
 	StatsUserData::print();
+
+	forest.testIntegrity();
 
 	return 0;
 }

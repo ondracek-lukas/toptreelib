@@ -69,7 +69,7 @@ namespace TopTreeInternals {
 				return last;
 			}
 
-			TNode *next(TNode *node) {
+			static TNode *next(TNode *node) {
 				assert(node);
 				return node->*MNext;
 			}
@@ -107,6 +107,21 @@ namespace TopTreeInternals {
 			~InnerList() {
 				while (pop());
 			}
+
+			struct Iterator {
+					Iterator(TNode *node) : node(node) {};
+
+					TNode *operator*() const { return node; }
+					Iterator& operator++() { node = next(node); return *this; }
+
+					friend bool operator==(Iterator &a, Iterator &b) { return a.node == b.node; }
+					friend bool operator!=(Iterator &a, Iterator &b) { return a.node != b.node; }
+
+				private:
+					TNode *node;
+			};
+			Iterator begin() { return Iterator(front()); }
+			Iterator end()   { return Iterator(nullptr);}
 	};
 }
 

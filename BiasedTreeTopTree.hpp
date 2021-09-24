@@ -23,6 +23,14 @@ namespace TopTreeInternals {
 		protected:
 			using Integrity = typename TopTree<TUserData...>::Integrity;
 			using EIntegrity = BiasedTreeTopTreeIntegrity<TUserData...>; friend EIntegrity;
+#ifdef TOP_TREE_INTEGRITY
+		public:
+			virtual void testIntegrity() { // XXX just root tree test
+				Integrity::treeConsistency(ext(this->exposedRoot));
+				this->rollback();
+				EIntegrity::treeConsistency(ext(this->exposedRoot));
+			}
+#endif
 		private:
 			struct ENode;
 
@@ -358,24 +366,8 @@ namespace TopTreeInternals {
 	cut(Vertex u, Vertex v) {
 		this->rollback();
 
-		ENode *node = ext(this->vertexToNode[v]);
+		ENode *node = ext(TopTree<TUserData...>::baseNode(u, v));
 		assert(node); // interface assert, maybe use exception instead
-		if ((node->boundary[0] != u) && (node->boundary[1] != u)) {
-			std::swap(u, v);
-			node = ext(this->vertexToNode[v]);
-			assert(node && ((node->boundary[0] == u) || (node->boundary[1] == u))); // interface assert
-		}
-		if (node->clusterType != BASE) {
-			node = ext(node->children[node->boundary[1] == u]);
-			while (node->clusterType != BASE) {
-				assert((node->boundary[0] == u) || (node->boundary[1] == u));
-				assert((node->boundary[0] == v) || (node->boundary[1] == v));
-				assert(node->clusterType == RAKE);
-				node = ext(node->children[0]);
-			}
-		}
-		assert((node->boundary[0] == u) || (node->boundary[1] == u));
-		assert((node->boundary[0] == v) || (node->boundary[1] == v));
 
 		ENode *root = findRoot<COMPRESS>(node, false);
 		if (root->parent) {
