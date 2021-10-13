@@ -1,7 +1,5 @@
-#!/bin/bash
-
 .PHONY: all %.test clean
-.PRECIOUS: %.out
+.PRECIOUS: *.out
 
 all: InnerListTest.test TopTreeBaseTest.test BiasedTreeTopTreeTest.test ContractionTopTreeTest.test
 

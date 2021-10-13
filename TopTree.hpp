@@ -49,12 +49,14 @@ namespace TopTreeInternals {
 			DataRefsArray children;
 			Vertex boundary[2];
 			Vertex innerVertex;
+			Vertex childrenBoundary[2][2];
 			EventData(
 				ClusterType type,
 				TUserData &parent, TUserData &child1, TUserData &child2,
-				Vertex *boundary, Vertex innerVertex) :
+				Vertex *boundary, Vertex innerVertex, Vertex *child1Boundary, Vertex* child2Boundary) :
 				type(type), parent(parent), children{child1, child2},
-				boundary{boundary[0], boundary[1]}, innerVertex(innerVertex) {};
+				boundary{boundary[0], boundary[1]}, innerVertex(innerVertex),
+				childrenBoundary{{child1Boundary[0], child1Boundary[1]},{child2Boundary[0], child2Boundary[1]}} {}
 	};
 
 	template <class... TUserData>
@@ -64,7 +66,7 @@ namespace TopTreeInternals {
 
 		public:
 			virtual bool expose(Vertex u, Vertex v);
-			virtual bool exposeTree(Vertex v); // set tree with v as main
+			virtual bool exposeTree(Vertex v); // sets tree with v as exposed, returns false if v is isolated and no such tree exists
 			virtual void link(Vertex u, Vertex v, TUserData... userData) = 0; // use move semantics for userData? XXX
 			virtual std::tuple<TUserData...> cut(Vertex u, Vertex v) = 0;
 
@@ -102,6 +104,7 @@ namespace TopTreeInternals {
 			auto &getEdgeData();
 
 			std::pair<Vertex, Vertex> getBoundary();
+			Vertex getBoundary(int index);
 
 
 		protected:  // to be accessible by driver
@@ -259,7 +262,6 @@ namespace TopTreeInternals {
 
 			template <class TNode> // templating may be used later
 			void deleteNodeT(Node *node, InnerList<Node, &Node::tmpListNode> &freeTNodes) {
-				// TODO: add deallocation in TopTree destructor
 				assert(node && !node->parent && !node->children[0] && !node->children[1]);
 				freeTNodes.push(node);
 			}
@@ -287,12 +289,16 @@ namespace TopTreeInternals {
 		private:
 			NodeInPath joinNodesInPath(NodeInPath np1, NodeInPath np2);
 
-#ifdef TOP_TREE_INTEGRITY
 		public:
+#ifdef TOP_TREE_INTEGRITY
 			virtual void testIntegrity() { // XXX just root tree test
 				assert(Integrity::treeConsistency(exposedRoot));
 			}
 #endif
+
+			virtual ~TopTree() {
+				while (Node *node = freeNodes.pop()) delete node;
+			}
 
 	};
 
@@ -514,8 +520,13 @@ namespace TopTreeInternals {
 				rollbackListCurNode = tmpRollbackListCurNode;
 				tmpRollbackListCurNode = nullptr;
 
+				exposedRoot = npRoot.node;
+				if (rollbackListCurNode) rollbackListCurNode->tmpMark = true; // clean up for the case of exception in select
+
 				reverse = select(npRoot.node->template getEventData<I>());
 				reverse ^= npRoot.node->children[0] != npL.node;
+
+				if (rollbackListCurNode) rollbackListCurNode->tmpMark = false;
 
 				releaseJustNode(npRoot.node);
 				npRoot.node->detachChildren();
@@ -583,9 +594,19 @@ namespace TopTreeInternals {
 				// destroy temporary tree if the previous one is restored
 				if (node->tmpMark) {
 					node->tmpMark = false;
-					for (Node *node : exposedRoot->postorder()) {
-						node->detach();
-						deleteNode(node);
+					{
+						Node *prevNode = nullptr;
+						for (Node *node : exposedRoot->postorder()) {
+							if (prevNode) {
+								prevNode->detach();
+								deleteNode(prevNode);
+							}
+							prevNode = node;
+						}
+						if (prevNode) {
+							prevNode->detach();
+							deleteNode(prevNode);
+						}
 					}
 					exposedRoot = prevRoot;
 					prevRoot = rollbackList.front();
@@ -617,6 +638,12 @@ namespace TopTreeInternals {
 	}
 
 	template <class... TUserData>
+	inline Vertex TopTree<TUserData...>::getBoundary(int index) {
+		assert(exposedRoot);
+		return exposedRoot->boundary[index];
+	}
+
+	template <class... TUserData>
 	template <int I>
 	inline auto &TopTree<TUserData...>::getRootData() {
 		assert(exposedRoot);
@@ -643,12 +670,18 @@ namespace TopTreeInternals {
 
 	template <class... TUserData>
 	inline void TopTree<TUserData...>::releaseNode(Node *node) {
-		releaseNodeData(node, std::index_sequence_for<TUserData...>());
+		assert(node->clusterType != ClusterType::BASE);
+		if constexpr(sizeof...(TUserData) > 0) {
+			releaseNodeData(node, std::index_sequence_for<TUserData...>());
+		}
 	}
 
 	template <class... TUserData>
 	inline void TopTree<TUserData...>::releaseJustNode(Node *node) {
-		releaseJustNodeData(node, std::index_sequence_for<TUserData...>());
+		assert(node->clusterType != ClusterType::BASE);
+		if constexpr(sizeof...(TUserData) > 0) {
+			releaseJustNodeData(node, std::index_sequence_for<TUserData...>());
+		}
 	}
 
 	template <class... TUserData>
@@ -759,7 +792,8 @@ namespace TopTreeInternals {
 			std::get<I>(children[0]->userData),
 			std::get<I>(children[1]->userData),
 			boundary,
-			this->getInnerVertex());
+			this->getInnerVertex(),
+			children[0]->boundary, children[1]->boundary);
 	}
 
 	template <class... TUserData>

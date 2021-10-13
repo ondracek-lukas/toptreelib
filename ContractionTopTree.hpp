@@ -22,8 +22,8 @@ namespace TopTreeInternals {
 		protected:
 			using Integrity = typename TopTree<TUserData...>::Integrity;
 			using EIntegrity = ContractionTopTreeIntegrity<TUserData...>; friend EIntegrity;
-#ifdef TOP_TREE_INTEGRITY
 		public:
+#ifdef TOP_TREE_INTEGRITY
 			virtual void testIntegrity() { // just root tree test
 				Integrity::treeConsistency(ext(this->exposedRoot));
 				this->rollback();
@@ -223,6 +223,28 @@ namespace TopTreeInternals {
 			VirtNode *tryJoin(Arc *arc);
 
 			void updateClusterization(typename VirtNode::List &&I, typename VirtNode::List &&D);
+
+		public:
+			virtual ~ContractionTopTree() {
+				this->rollback();
+				typename VirtNode::List D;
+				for (Arc *initArc : vertexToArc) {
+					if (!initArc || !D.tryAppend(initArc->virtNode)) continue;
+					for (Arc *arc = initArc->succ(); arc != initArc; arc = arc->succ()) {
+						D.tryAppend(arc->virtNode);
+					}
+				}
+				while (VirtNode *node = D.pop()) {
+					if (node->virtParent) D.tryAppend(node->virtParent);
+					if (node->isDummy()) {
+						delete node;
+					} else {
+						delete node->node; // node is part of node->node memory
+					}
+				}
+				while (ENode *node = ext(freeENodes.pop())) delete node;
+				while (VirtNode *node = freeDummyNodes.pop()) delete node;
+			}
 	};
 
 
@@ -230,6 +252,7 @@ namespace TopTreeInternals {
 	void ContractionTopTree<TUserData...>::
 	link(Vertex u, Vertex v, TUserData... userData) {
 		this->rollback();
+		// XXX check whether possible
 		ENode *node = newNode();
 		node->setBoundary(u, v);
 		node->userData = {userData...};

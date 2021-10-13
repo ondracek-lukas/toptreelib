@@ -23,8 +23,8 @@ namespace TopTreeInternals {
 		protected:
 			using Integrity = typename TopTree<TUserData...>::Integrity;
 			using EIntegrity = BiasedTreeTopTreeIntegrity<TUserData...>; friend EIntegrity;
-#ifdef TOP_TREE_INTEGRITY
 		public:
+#ifdef TOP_TREE_INTEGRITY
 			virtual void testIntegrity() { // XXX just root tree test
 				Integrity::treeConsistency(ext(this->exposedRoot));
 				this->rollback();
@@ -305,6 +305,19 @@ namespace TopTreeInternals {
 				rightChild->template detach<TTreeType>();
 				deleteNode(node);
 				return {leftChild, rightChild};
+			}
+
+		public:
+			virtual ~BiasedTreeTopTree() {
+				this->rollback();
+				for (Node *node : this->vertexToNode) {
+					if (!node || node->tmpMark) continue;
+					for (Node *node2 : this->treeRoot(node)->postorder()) {
+						freeENodes.push(node2);
+						node2->tmpMark = true;
+					}
+				}
+				while (ENode *node = ext(freeENodes.pop())) delete node;
 			}
 
 	};
