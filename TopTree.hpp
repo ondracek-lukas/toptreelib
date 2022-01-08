@@ -95,7 +95,7 @@ namespace TopTreeInternals {
 			// Returned root data may be accessed and modified
 			// until next call to any method.
 			template <int I = 0>
-			auto &getRootData();
+			auto &getExposedData();
 
 			// Getting edge data should be used only if we know
 			// that current boundary vertices are connected by an edge.
@@ -647,7 +647,7 @@ namespace TopTreeInternals {
 
 	template <class... TUserData>
 	template <int I>
-	inline auto &TopTree<TUserData...>::getRootData() {
+	inline auto &TopTree<TUserData...>::getExposedData() {
 		assert(exposedRoot);
 		validateUserData<I>(exposedRoot);
 		return std::get<I>(exposedRoot->userData);

@@ -142,11 +142,11 @@ class TestingTopTree : public TopTree<PathLengthUserData, PathLengthUserData, Tr
 			Node *root = createSubTree(depth1, rakeToAllRatio, this->newVertex());
 			this->markNodeAsRoot(root);
 			assert(Integrity::treeConsistency(root));
-			this->getRootData().multiplyAll(3);
+			this->getExposedData().multiplyAll(3);
 			root = createSubTree(depth2, rakeToAllRatio, this->newVertex());
 			this->markNodeAsRoot(root);
 			assert(Integrity::treeConsistency(root));
-			this->getRootData().multiplyAll(3);
+			this->getExposedData().multiplyAll(3);
 			paths.compute();
 			printf("Base nodes: %d\nRake nodes: %d\nCompress nodes: %d\n", baseCnt, rakeCnt, compressCnt);
 		}
@@ -229,7 +229,7 @@ int main() {
 			TopTreeIntegrityLevel = IntegrityCounter++ % 21 ? 1 : 2;
 			if (forest.expose(u, v)) {
 				auto [u2,v2] = forest.getBoundary();
-				auto rootData = forest.getRootData<0>();
+				auto rootData = forest.getExposedData<0>();
 				assert(((u == u2) && (v == v2)) || ((u == v2) && (v == u2)));
 				assert(rootData.length == forest.paths.getLength(u,v));
 			} else {
@@ -268,9 +268,9 @@ int main() {
 	TopTreeIntegrityLevel = 2;
 
 	forest.exposeTree(0);
-	forest.getRootData<2>().increaseAll(10);
+	forest.getExposedData<2>().increaseAll(10);
 	forest.exposeTree(129);
-	forest.getRootData<2>().increaseAll(10);
+	forest.getExposedData<2>().increaseAll(10);
 
 	for (auto minimum : forest.minima) {
 		forest.exposeTree(minimum.u);
@@ -278,7 +278,7 @@ int main() {
 			return eventData.children[1] < eventData.children[0];
 		});
 		auto [u, v] = forest.getBoundary();
-		int weight = forest.getRootData<2>().minWeight;
+		int weight = forest.getExposedData<2>().minWeight;
 
 		std::cout << "  " << minimum.u << " " << minimum.v << ": " << minimum.weight
 			<< " -- " << u << " " << v << ": " << weight << std::endl;

@@ -170,16 +170,16 @@ forest.link(v, w, 2); // edge vw of length 2 using implicit conversion of int to
 forest.link(v, z, 4);
 
 forest.expose(u, w);
-int uw_length = forest.getRootData().length; // returns 3
+int uw_length = forest.getExposedData().length; // returns 3
 
 forest.expose(w, z);
-int wz_length = forest.getRootData().length; // returns 6
+int wz_length = forest.getExposedData().length; // returns 6
 
 forest.cut(u, v);
 forest.link(u, z, 8);
 
 forest.expose(u, w);
-int new_uw_length = forest.getRootData().length; // returns 14
+int new_uw_length = forest.getExposedData().length; // returns 14
 
 ```
 
@@ -223,7 +223,7 @@ and only temporarily creates the modified part beside it;
 before next operation the temporary part is destroyed unrolling all structural changes.
 No links/cuts are forced in this case.
 
-Access to the topmost cluster data (calling `getRootData` method) forces delayed joins in the whole tree.
+Access to the topmost cluster data (calling `getExposedData` method) forces delayed joins in the whole tree.
 If the last operation was expose, even some splits in the original tree may be forced;
 following rollback then forces splits in the temporal part of the tree.
 If multiple user data classes are used, only data of the needed one are propagated.
@@ -240,7 +240,7 @@ you can then perform exposes and some data accesses keeping unneeded data untouc
 It may be even asymptotically beneficial if splits/joins are not constant-time.
 
 If you, on the other hand, need the worst-case time guarantees,
-just call `getRootData` after each operation on all affected trees and all user data
+just call `getExposedData` after each operation on all affected trees and all user data
 to force all delayed splits and joins.
 
 
@@ -298,7 +298,7 @@ The behaviour is undefined if the edge doesn't exist.
 
 Exposes path between u and v and the tree containing them
 making u and v boundary vertices of its topmost cluster.
-Use `getRootData` to access the associated data.
+Use `getExposedData` to access the associated data.
 
 Returns false if u and v are not in the same tree.
 
@@ -309,7 +309,7 @@ causing logarithmically many delayed calls to split/join.
 ### `bool exposeTree(TopTreeVertex v)`
 
 Exposes tree containing v, its boundary vertices may be arbitrary after this operation.
-Use `getRootData` to acces the associated data.
+Use `getExposedData` to acces the associated data.
 
 Returns false if v is an isolated vertex and so it is not contained in any cluster.
 
@@ -347,7 +347,7 @@ It works similar to search, except for the additional guarantee,
 that the exposed path stays the same throughout the whole search.
 
 
-### `I-th TUserData &getRootData<int I=0>()`
+### `I-th TUserData &getExposedData<int I=0>()`
 
 Returns reference to the `I`-th user data associated with the topmost cluster of the exposed tree.
 The returned object is valid until any operation involving changes in clusterization is called
@@ -439,8 +439,8 @@ The array `childrenBoundary[i]` contains boundary of `children[i]` in the same o
 as `boundary` would use in EventData of `children[i]`.
 
 
-Example code with propagating changes and searching
-===================================================
+Example code – propagating changes and searching
+================================================
 
 In the following code, we maintain tree with weights on edges.
 We want to be able in logarithmic time to
@@ -468,7 +468,8 @@ struct MyClusterData {
 		if (eventData.type == TopTreeClusterType::COMPRESS) {
 
 			eventData.parent.minWeight =
-				std::min(eventData.children[0].minWeight, eventData.children[1].minWeight);
+				std::min(eventData.children[0].minWeight,
+					eventData.children[1].minWeight);
 
 		} else { // TopTreeClusterType::RAKE
 
@@ -483,7 +484,8 @@ struct MyClusterData {
 
 			int delta =
 				eventData.parent.minWeight -
-				std::min(eventData.children[0].minWeight, eventData.children[1].minWeight);
+				std::min(eventData.children[0].minWeight,
+					eventData.children[1].minWeight);
 			eventData.children[0].minWeight += delta;
 			eventData.children[1].minWeight += delta;
 
@@ -512,8 +514,8 @@ forest.link(v, z, 5);
 
 // get minimal weight on path uw and increse all weights on that path by 3
 forest.expose(u, w);
-int uw_minWeight = forest.getRootData().minWeight; // returns 1
-forest.getRootData().incWeightsOnPath(3); // increases weight of uv to 4 and weight of vw to 6
+int uw_minWeight = forest.getExposedData().minWeight; // returns 1
+forest.getExposedData().incWeightsOnPath(3); // increases weight of uv to 4 and weight of vw to 6
 
 // find minimal-weight edge on path wz and get its vertices and weight
 forest.expose(w, z);
@@ -522,7 +524,7 @@ forest.pathSearch([](auto eventData) {
 		return eventData.children[0].minWeight > eventData.children[1].minWeight;
 });
 auto [v1, v2] = forest.getBoundary(); // returns {v, z} or {z, v}
-int v1v2_weight = forest.getRootData().minWeight; // returns 5
+int v1v2_weight = forest.getExposedData().minWeight; // returns 5
 
 // cut edge uv and get its final weight
 auto [uv_data] = forest.cut(u, v);

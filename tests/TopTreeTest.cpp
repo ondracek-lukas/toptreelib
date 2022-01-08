@@ -318,11 +318,11 @@ int test(int vertices, int maxComponents, int outerIters, int innerIters, int lo
 		int edgeLength = rndDist(rndGen) * 1000;
 		forest.link(u, v, edgeLength, StatsUserData());
 		assert(shadowForest.link(u, v, edgeLength * 2));
-		forest.getRootData<1>().log();
+		forest.getExposedData<1>().log();
 		u = v;
 	}
 
-	forest.getRootData().multiplyAll(2);
+	forest.getExposedData().multiplyAll(2);
 
 	for (int i = 0; i < outerIters; i++) {
 		while (shadowForest.verticesCnt() - shadowForest.edgesCnt() < maxComponents - 1) {
@@ -335,7 +335,7 @@ int test(int vertices, int maxComponents, int outerIters, int innerIters, int lo
 			auto [data, stats] = forest.cut(u, v);
 			assert(data.length == length);
 			assert(shadowForest.cut(u, v));
-			forest.getRootData<1>().log();
+			forest.getExposedData<1>().log();
 		}
 
 		for (int j = 0; j < innerIters; j++) {
@@ -352,7 +352,7 @@ int test(int vertices, int maxComponents, int outerIters, int innerIters, int lo
 				}
 				int edgeLength = rndDist(rndGen) * 1000;
 				forest.link(u, v, edgeLength, StatsUserData());
-				forest.getRootData<1>().log();
+				forest.getExposedData<1>().log();
 				assert(shadowForest.link(u, v, edgeLength));
 			} else {
 				if (++step % logPeriod == 0) {
@@ -360,9 +360,9 @@ int test(int vertices, int maxComponents, int outerIters, int innerIters, int lo
 				}
 				bool succ = forest.expose(u, v);
 				assert(succ);
-				auto data = forest.getRootData();
+				auto data = forest.getExposedData();
 				assert(data.length == length);
-				forest.getRootData<1>().log();
+				forest.getExposedData<1>().log();
 			}
 		}
 	}
