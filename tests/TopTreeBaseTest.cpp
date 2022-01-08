@@ -1,4 +1,4 @@
-// TopTreeLibrary  Copyright (C) 2019  Lukáš Ondráček <ondracek@ktiml.mff.cuni.cz>, use under GNU GPLv3
+// TopTreeLibrary  Copyright (C) 2022  Lukáš Ondráček <ondracek.lukas@gmail.com>, use under MIT license
 
 #define TOP_TREE_INTEGRITY
 #include "../TopTree.hpp"
@@ -247,8 +247,9 @@ int main() {
 			if (forest.expose(u, v)) {
 				TopTreeVertex currVert = u;
 				for (int i = 1; currVert != v; i++) {
-					forest.pathSearch<1>([u, i](auto eventData) {
+					forest.pathSearch<1>([u, v, i](auto eventData) {
 						bool rev = eventData.boundary[1] == u;
+						assert(eventData.boundary[!rev] == v);
 						return rev ^ (eventData.children[rev].length < i);
 					});
 					auto [boundVert1, boundVert2] = forest.getBoundary();

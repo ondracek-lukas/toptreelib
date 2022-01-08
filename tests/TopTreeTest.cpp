@@ -1,4 +1,4 @@
-// TopTreeLibrary  Copyright (C) 2019  Lukáš Ondráček <ondracek@ktiml.mff.cuni.cz>, use under GNU GPLv3
+// TopTreeLibrary  Copyright (C) 2022  Lukáš Ondráček <ondracek.lukas@gmail.com>, use under MIT license
 
 #define STR(S) #S
 #define TOP_TREE_HEADER(TYPE) STR(../TYPE.hpp)

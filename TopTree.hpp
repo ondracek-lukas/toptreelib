@@ -1,4 +1,4 @@
-// TopTreeLibrary  Copyright (C) 2019  Lukáš Ondráček <ondracek@ktiml.mff.cuni.cz>, use under GNU GPLv3
+// TopTreeLibrary  Copyright (C) 2022  Lukáš Ondráček <ondracek.lukas@gmail.com>, use under MIT license
 
 /* The Top Tree base abstract class.
  * It should be derived by specific drivers
@@ -28,6 +28,7 @@ namespace TopTreeInternals {
 
 #include <tuple>
 #include <vector>
+#include <cstddef>
 
 #include "TopTreeInternals/SubtreeTraversability.hpp"
 #include "TopTreeInternals/InnerList.hpp"
@@ -547,6 +548,7 @@ namespace TopTreeInternals {
 			npR = {}; npRL = {};
 
 			if (!npLR.onPath) {
+				assert(!onExposedPath);
 				npLL.onPath = false;
 				npRR = joinNodesInPath(npRR, npLL);
 				npLL = {};

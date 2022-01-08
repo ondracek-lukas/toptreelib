@@ -1,4 +1,4 @@
-// TopTreeLibrary  Copyright (C) 2019  Lukáš Ondráček <ondracek@ktiml.mff.cuni.cz>, use under GNU GPLv3
+// TopTreeLibrary  Copyright (C) 2022  Lukáš Ondráček <ondracek.lukas@gmail.com>, use under MIT license
 
 /* Singly-linked list of TNode objects
  * with next pointers stored in TNode's member variable *MNext.
