@@ -531,6 +531,11 @@ auto [uv_data] = forest.cut(u, v);
 int uv_final_weight = uv_data.minWeight; // returns 4
 ```
 
+Acknowledgment
+==============
+
+The development was supported by the Charles University, project GA UK No. 1311620.
+
 
 References
 ==========
