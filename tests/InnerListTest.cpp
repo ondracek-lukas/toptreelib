@@ -1,6 +1,7 @@
 // TopTreeLibrary  Copyright (C) 2022  Lukáš Ondráček <ondracek.lukas@gmail.com>, use under MIT license
 
 #include <cassert>
+#define ttassert assert
 #include "../TopTreeInternals/InnerList.hpp"
 #include <vector>
 #include <list>

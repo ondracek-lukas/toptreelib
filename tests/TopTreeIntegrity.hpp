@@ -10,11 +10,10 @@
 
 #ifdef TOP_TREE_INTEGRITY
 
-#define assert_STR(expr) #expr
-	// XXX rename, e.g. to ttassert
-#define assert(cond) { \
+#define ttassert_STR(expr) #expr
+#define ttassert(cond) { \
 		if (!(cond)) { \
-			printf("Assertion [" assert_STR(cond) "] failed at " __FILE__ ":%d\n\n", __LINE__); \
+			printf("Assertion [" ttassert_STR(cond) "] failed at " __FILE__ ":%d\n\n", __LINE__); \
 			fflush(stdout); \
 			abort(); \
 		}}

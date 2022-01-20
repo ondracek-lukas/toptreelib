@@ -12,7 +12,7 @@
 namespace TopTreeInternals {
 	template <class... TUserData> class ContractionTopTreeIntegrity {};
 }
-#define assert(cond)
+#define ttassert(cond)
 #endif
 
 namespace TopTreeInternals {
@@ -90,16 +90,16 @@ namespace TopTreeInternals {
 					void upgradeIfMarked() {
 						if ((uintptr_t) ptrs[D] & 1) {
 							ptrs[D] = (Arc *) ((uintptr_t) ptrs[D] & ~(uintptr_t)1);
-							assert(ptrs[D]->virtNode->virtParent);
-							assert(virtNode->node->boundary[D^arcIndex()] == ptrs[D]->virtNode->node->boundary[!D^ptrs[D]->arcIndex()]);
-							assert(
+							ttassert(ptrs[D]->virtNode->virtParent);
+							ttassert(virtNode->node->boundary[D^arcIndex()] == ptrs[D]->virtNode->node->boundary[!D^ptrs[D]->arcIndex()]);
+							ttassert(
 									(virtNode->node->boundary[D^arcIndex()] == ptrs[D]->virtNode->virtParent->node->boundary[0]) ||
 									(virtNode->node->boundary[D^arcIndex()] == ptrs[D]->virtNode->virtParent->node->boundary[1]));
 
 							ptrs[D] = &ptrs[D]->virtNode->virtParent->arcs[
 								virtNode->node->boundary[D^arcIndex()] == ptrs[D]->virtNode->virtParent->node->boundary[D]];
 							ptrs[D]->ptrs[!D] = this;
-							assert(EIntegrity::template arcConsistency<D>(this));
+							ttassert(EIntegrity::template arcConsistency<D>(this));
 						}
 					}
 
@@ -108,11 +108,11 @@ namespace TopTreeInternals {
 						return virtNode == succ()->virtNode;
 					}
 					bool canCompress() {
-						assert(!isLeaf());
+						ttassert(!isLeaf());
 						return succ()->twin()->succ()->virtNode == virtNode;
 					}
 					bool canRake() {
-						assert(!isLeaf());
+						ttassert(!isLeaf());
 						return succ()->isLeaf();
 					}
 			};
@@ -141,13 +141,13 @@ namespace TopTreeInternals {
 							using base::begin;
 							using base::end;
 							void append(VirtNode *node) {
-								assert(node != NOT_IN_LIST);
-								assert(node->listNode == NOT_IN_LIST);
+								ttassert(node != NOT_IN_LIST);
+								ttassert(node->listNode == NOT_IN_LIST);
 								node->listNode = NULL;
 								base::append(node);
 							}
 							bool tryAppend(VirtNode *node) {
-								assert(node != NOT_IN_LIST);
+								ttassert(node != NOT_IN_LIST);
 								if (node->listNode != NOT_IN_LIST) {
 									return false;
 								}
@@ -156,7 +156,7 @@ namespace TopTreeInternals {
 							}
 							VirtNode *pop() {
 								VirtNode *node = base::pop();
-								assert(node != NOT_IN_LIST);
+								ttassert(node != NOT_IN_LIST);
 								if (node) node->listNode = NOT_IN_LIST;
 								return node;
 							}
@@ -166,7 +166,7 @@ namespace TopTreeInternals {
 						return this != virt(node); // compares just pointers, should work even after deleting node
 					}
 					bool isMoveValid() {
-						assert(!isDummy());
+						ttassert(!isDummy());
 						return
 							childrenArcs[0] && (childrenArcs[0]->succ() == childrenArcs[1]) &&
 							(node->clusterType == COMPRESS ? childrenArcs[0]->canCompress() : childrenArcs[0]->canRake());
@@ -174,7 +174,7 @@ namespace TopTreeInternals {
 
 					// Gets neighbouring arc on lower level incident to index'th arc as pred/succ
 					Arc *lowerLevelArcs(int index, typename Arc::Dir direction) {
-						assert(isDummy() || (node->clusterType != BASE));
+						ttassert(isDummy() || (node->clusterType != BASE));
 						Arc *arc = childrenArcs[0];
 						if (index == 0) {
 							if ((direction == Arc::Dir::SUCC) && !isDummy()) {
@@ -214,7 +214,7 @@ namespace TopTreeInternals {
 				return new VirtNode();
 			}
 			void deleteDummyNode(VirtNode *node) {
-				assert(!node->virtParent);
+				ttassert(!node->virtParent);
 				freeDummyNodes.push(node);
 			}
 
@@ -278,13 +278,13 @@ namespace TopTreeInternals {
 	cut(Vertex u, Vertex v) {
 		this->rollback();
 		ENode *node = ext(TopTree<TUserData...>::baseNode(u, v));
-		assert(node); // interface assert, maybe use exception instead
+		ttassert(node); // interface assert, maybe use exception instead
 		typename VirtNode::List D;
 		D.append(&node->virtNode);
 		for (int i : {0, 1}) {
 			if (node->virtNode.arcs[!i].isLeaf()) {
 				this->markVertexAsIsolated(node->boundary[i]);
-				assert(vertexToArc[node->boundary[i]] == &node->virtNode.arcs[i]);
+				ttassert(vertexToArc[node->boundary[i]] == &node->virtNode.arcs[i]);
 				vertexToArc[node->boundary[i]] = nullptr;
 			} else {
 				if (vertexToArc[node->boundary[i]] == &node->virtNode.arcs[i]) {
@@ -409,14 +409,14 @@ namespace TopTreeInternals {
 						VirtNode *sibling = node->arcs[i].succ()->virtNode; // == newParent->childrenArcs[1]->virtNode
 						for (VirtNode *n : {node, sibling}) {
 							if (n->virtParent) {
-								assert(n->virtParent->isDummy());
+								ttassert(n->virtParent->isDummy());
 								n->virtParent->childrenArcs[0] = nullptr;
 								newD.append(n->virtParent);
 							}
 							n->virtParent = newParent;
 						}
 						newI.append(newParent);
-						assert(EIntegrity::childrenConsistency(newParent));
+						ttassert(EIntegrity::childrenConsistency(newParent));
 						break;
 					}
 				}
@@ -426,7 +426,7 @@ namespace TopTreeInternals {
 			// CREATE new DUMMY parents of nodes in I,I2 (unless neighbourless); insert them to newI
 			// copy even their arc-ptrs (temporary)
 			for (auto X : {&I, &I2}) while (VirtNode *node = (*X).pop()) {
-				assert(EIntegrity::childrenNeighbourhoodConsistency(node));
+				ttassert(EIntegrity::childrenNeighbourhoodConsistency(node));
 				if (!node->node->parent) {
 					if (node->arcs[0].isLeaf() && node->arcs[1].isLeaf()) {
 						this->markNodeAsRoot(node->node);
@@ -435,7 +435,7 @@ namespace TopTreeInternals {
 							node->virtParent->childrenArcs[0] = nullptr;
 							node->virtParent = nullptr;
 						}
-						assert(EIntegrity::treeConsistency(node->node));
+						ttassert(EIntegrity::treeConsistency(node->node));
 					} else if (!node->virtParent) {
 						VirtNode *newParent = newDummyNode();
 						newParent->childrenArcs[0] = &node->arcs[0];
@@ -446,7 +446,7 @@ namespace TopTreeInternals {
 							newParent->arcs[i].template setMarked<Arc::Dir::SUCC>(node->arcs[i].succ());
 						}
 						newI.append(newParent);
-						assert(EIntegrity::childrenConsistency(newParent));
+						ttassert(EIntegrity::childrenConsistency(newParent));
 					}
 				}
 			}
@@ -464,16 +464,16 @@ namespace TopTreeInternals {
 					arc.template upgradeIfMarked<Arc::Dir::PRED>();
 					arc.template upgradeIfMarked<Arc::Dir::SUCC>();
 				}
-				assert(EIntegrity::nodeConsistency(node));
+				ttassert(EIntegrity::nodeConsistency(node));
 			}
 
 			I = std::move(newI);
 			D = std::move(newD);
 
-			assert(!newI.front());
-			assert(!newD.front());
-			assert(!I2.front());
-			assert(!N.front());
+			ttassert(!newI.front());
+			ttassert(!newD.front());
+			ttassert(!I2.front());
+			ttassert(!N.front());
 		}
 
 	}
@@ -497,7 +497,7 @@ namespace TopTreeInternals {
 
 		for (Arc *arc : {arc, arc->succ()}) {
 			if (arc->virtNode->node->parent) {
-				assert(arc->virtNode->virtParent);
+				ttassert(arc->virtNode->virtParent);
 				this->releaseNode(arc->virtNode->node->parent);
 				arc->virtNode->node->detach();
 			}
@@ -516,7 +516,7 @@ namespace TopTreeInternals {
 			virtNode->arcs[i].template setMarked<Arc::Dir::SUCC>(virtNode->lowerLevelArcs(i, Arc::Dir::SUCC));
 		}
 
-		assert(virtNode->node == node);
+		ttassert(virtNode->node == node);
 
 		return virtNode;
 	}
@@ -524,5 +524,5 @@ namespace TopTreeInternals {
 
 using TopTreeInternals::ContractionTopTree;
 
-#undef assert
+#undef ttassert
 #endif

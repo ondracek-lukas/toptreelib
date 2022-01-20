@@ -13,7 +13,7 @@
 namespace TopTreeInternals {
 	template <class... TUserData> class BiasedTreeTopTreeIntegrity {};
 }
-#define assert(cond)
+#define ttassert(cond)
 #endif
 
 namespace TopTreeInternals {
@@ -191,7 +191,7 @@ namespace TopTreeInternals {
 					if constexpr(TTreeType == COMPRESS) {
 						return !this->parent || (isRakeTreeNode() && isLeaf<RAKE>());
 					} else {
-						assert(this->parent);
+						ttassert(this->parent);
 						return !ext(this->parent->children[0])->isRakeTreeNode();
 					}
 				}
@@ -265,7 +265,7 @@ namespace TopTreeInternals {
 					node = ext(node->children[nextI]);
 				}
 				if constexpr(TTreeType == COMPRESS) {
-					assert(node->isRakeTreeNode());
+					ttassert(node->isRakeTreeNode());
 				}
 				return node;
 			}
@@ -296,7 +296,7 @@ namespace TopTreeInternals {
 			}
 			template <ClusterType TTreeType>
 			std::tuple<ENode *, ENode *> splitNode(ENode *node, bool rev = false) {
-				assert(!node->parent);
+				ttassert(!node->parent);
 				this->releaseJustNode(node);
 				this->markVertexAsIsolated(node->getInnerVertex());
 				ENode *leftChild = ext(node->children[rev]);
@@ -330,7 +330,7 @@ namespace TopTreeInternals {
 		this->rollback();
 		ENode *uTree = ext(this->treeRoot(this->vertexToNode[u]));
 		ENode *vTree = ext(this->treeRoot(this->vertexToNode[v]));
-		assert((uTree != vTree) || !uTree); // interface assert, maybe use exception instead
+		ttassert((uTree != vTree) || !uTree); // interface assert, maybe use exception instead
 
 		/*
 		std::cout << std::endl;
@@ -380,7 +380,7 @@ namespace TopTreeInternals {
 		this->rollback();
 
 		ENode *node = ext(TopTree<TUserData...>::baseNode(u, v));
-		assert(node); // interface assert, maybe use exception instead
+		ttassert(node); // interface assert, maybe use exception instead
 
 		ENode *root = findRoot<COMPRESS>(node, false);
 		if (root->parent) {
@@ -492,7 +492,7 @@ namespace TopTreeInternals {
 			if (!cRoot || (cRoot->boundary[0] == v) || (cRoot->boundary[1] == v)) {
 				return cRoot;
 			} else {
-				assert(cRoot->getInnerVertex() == v);
+				ttassert(cRoot->getInnerVertex() == v);
 				cSplit = cRoot; // the split node should be used again
 			}
 		} else if (cSplit->isRakeTreeNode() && cSplit->template isLeaf<RAKE>() && (cSplit->parent->boundary[1] != v)) {
@@ -512,7 +512,7 @@ namespace TopTreeInternals {
 		// std::cout << "Symmetrize(" << v << ")" << std::endl;
 		ENode *root = ext(this->vertexToNode[v]);
 		if (!root) return nullptr;
-		assert(!root->parent);
+		ttassert(!root->parent);
 		this->markNodeAsNonRoot(root);
 		root = symmetrizeRecurse(v, root);
 		this->markNodeAsRoot(root);
@@ -669,7 +669,7 @@ namespace TopTreeInternals {
 			root = btJoin<TTreeType, true>(leftTree, rightTree);
 		}
 
-		assert(EIntegrity::treeConsistency(root));
+		ttassert(EIntegrity::treeConsistency(root));
 		return root;
 	}
 
@@ -818,12 +818,12 @@ namespace TopTreeInternals {
 			middleNode->tmpMark = true;
 			middleNode = ext(middleNode->parent);
 		}
-		assert(middleNode == tree);
+		ttassert(middleNode == tree);
 
 		bool rev = false;
 		ENode *left = nullptr, *right = nullptr;
 		while ((middleNode->clusterType != BASE) && (middleNode->children[0]->tmpMark || middleNode->children[1]->tmpMark)) {
-			assert(!middleNode->template isLeaf<TTreeType>());
+			ttassert(!middleNode->template isLeaf<TTreeType>());
 			int nextI = middleNode->children[1]->tmpMark;
 			bool childRev = rev ^ middleNode->isChildReversed(nextI);
 			auto [leftChild, rightChild] = splitNode<TTreeType>(middleNode);
@@ -848,8 +848,8 @@ namespace TopTreeInternals {
 			middleNode->template setLeafData<TTreeType, false>();
 		}
 
-		assert(EIntegrity::treeConsistency(left));
-		assert(EIntegrity::treeConsistency(right));
+		ttassert(EIntegrity::treeConsistency(left));
+		ttassert(EIntegrity::treeConsistency(right));
 
 		return {left, middleNode, right};
 	}
@@ -858,5 +858,5 @@ namespace TopTreeInternals {
 
 using TopTreeInternals::BiasedTreeTopTree;
 
-#undef assert
+#undef ttassert
 #endif

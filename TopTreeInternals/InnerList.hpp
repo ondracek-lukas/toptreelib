@@ -9,8 +9,9 @@
 
 #include <utility>
 
-#ifndef assert
-#define assert(cond)
+#ifndef ttassert
+#define myttassert
+#define ttassert(cond)
 #endif
 
 namespace TopTreeInternals {
@@ -22,7 +23,7 @@ namespace TopTreeInternals {
 			TNode *last = nullptr;
 
 			void insert(TNode **listPtr, TNode *node) {
-				assert(node && !(node->*MNext));
+				ttassert(node && !(node->*MNext));
 				if (!*listPtr) last = node;
 				node->*MNext = *listPtr;
 				*listPtr = node;
@@ -70,7 +71,7 @@ namespace TopTreeInternals {
 			}
 
 			static TNode *next(TNode *node) {
-				assert(node);
+				ttassert(node);
 				return node->*MNext;
 			}
 
@@ -82,7 +83,7 @@ namespace TopTreeInternals {
 			}
 
 			TNode *removeAfter(TNode *after) {
-				assert(after);
+				ttassert(after);
 				return remove(&(after->*MNext), after);
 			}
 
@@ -125,4 +126,8 @@ namespace TopTreeInternals {
 	};
 }
 
+#ifdef myttassert
+#undef myttassert
+#undef ttassert
+#endif
 #endif
